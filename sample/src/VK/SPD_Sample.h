@@ -60,8 +60,8 @@ private:
     float                 m_pitch;
 
     float                 m_time;             // WallClock in seconds.
-    double                m_deltaTime;        // The elapsed time in milliseconds since the previous frame.
     double                m_lastFrameTime;
+    float                 m_timeStep = 0;
 
     bool                  m_bPlay;
 };

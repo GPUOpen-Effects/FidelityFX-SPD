@@ -175,6 +175,7 @@ namespace CAULDRON_VK
     }
 
     void SPD_CS_Linear_Sampler::OnCreateWindowSizeDependentResources(
+        VkCommandBuffer cmd_buf,
         uint32_t Width,
         uint32_t Height,
         Texture *pInput,
@@ -204,6 +205,27 @@ namespace CAULDRON_VK
         image_info.flags = 0;
         image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
         m_result.Init(m_pDevice, &image_info, "SpdDestinationMips");
+
+        // transition layout undefined to general layout?
+        VkImageMemoryBarrier imageMemoryBarrier = {};
+        imageMemoryBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        imageMemoryBarrier.pNext = NULL;
+        imageMemoryBarrier.srcAccessMask = 0;
+        imageMemoryBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+        imageMemoryBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        imageMemoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        imageMemoryBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        imageMemoryBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        imageMemoryBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        imageMemoryBarrier.subresourceRange.baseMipLevel = 0;
+        imageMemoryBarrier.subresourceRange.levelCount = m_mipCount;
+        imageMemoryBarrier.subresourceRange.baseArrayLayer = 0;
+        imageMemoryBarrier.subresourceRange.layerCount = 1;
+        imageMemoryBarrier.image = m_result.Resource();
+
+        // transition general layout if detination image to shader read only for source image
+        vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &imageMemoryBarrier);
 
         // Create views for the mip chain
         //
@@ -318,26 +340,9 @@ namespace CAULDRON_VK
         *m_pCounter = 0;
         vmaUnmapMemory(m_pDevice->GetAllocator(), m_globalCounterAllocation);
 
-        // transition layout undefined to general layout?
-        VkImageMemoryBarrier imageMemoryBarrier = {};
-        imageMemoryBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        imageMemoryBarrier.pNext = NULL;
-        imageMemoryBarrier.srcAccessMask = 0;
-        imageMemoryBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        imageMemoryBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        imageMemoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-        imageMemoryBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        imageMemoryBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        imageMemoryBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        imageMemoryBarrier.subresourceRange.baseMipLevel = 0;
-        imageMemoryBarrier.subresourceRange.levelCount = m_mipCount;
-        imageMemoryBarrier.subresourceRange.baseArrayLayer = 0;
-        imageMemoryBarrier.subresourceRange.layerCount = 1;
-        imageMemoryBarrier.image = m_result.Resource();
-
         // transition general layout if detination image to shader read only for source image
         vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            0, 0, nullptr, 0, nullptr, 1, &imageMemoryBarrier);
+            0, 0, nullptr, 0, nullptr, 0, nullptr);
 
         SetPerfMarkerBegin(cmd_buf, "SPD_CS_Linear_Sampler");
 
@@ -367,6 +372,10 @@ namespace CAULDRON_VK
         // Draw
         //
         vkCmdDispatch(cmd_buf, dispatchX, dispatchY, dispatchZ);
+
+        // transition general layout if detination image to shader read only for source image
+        vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0, 0, nullptr, 0, nullptr, 0, nullptr);
 
         SetPerfMarkerEnd(cmd_buf);
     }

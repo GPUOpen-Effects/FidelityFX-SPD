@@ -60,7 +60,7 @@
 
 // // global atomic counter - MUST be initialized to 0
 // // GLSL:
-// layout(std430, set=0, binding=2) buffer globalAtomicBuffer
+// layout(std430, set=0, binding=2) coherent buffer globalAtomicBuffer
 // {
 //    uint counter;
 // } globalAtomic;
@@ -69,7 +69,7 @@
 // {
 //    uint counter;
 // };
-// [[vk::binding(2)]] RWStructuredBuffer<globalAtomicBuffer> globalAtomic;
+// [[vk::binding(2)]] globallycoherent RWStructuredBuffer<globalAtomicBuffer> globalAtomic;
 
 // // [SAMPLER] add sampler
 // GLSL: layout(set=0, binding=3) uniform sampler srcSampler;
@@ -81,7 +81,7 @@
 // // GLSL:
 // layout(push_constant) uniform pushConstants {
 //    uint mips; // needed to opt out earlier if mips are < 12
-//    uint numWorkGroups; // number of total thread groups, so numWorkGroupsX * numWorkGroupsY * numWorkGroupsZ
+//    uint numWorkGroups; // number of total thread groups, so numWorkGroupsX * numWorkGroupsY * 1
 // } spdConstants;
 // // HLSL:
 // [[vk::push_constant]]

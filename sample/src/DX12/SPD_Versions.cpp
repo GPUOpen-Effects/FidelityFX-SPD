@@ -49,19 +49,8 @@ namespace CAULDRON_DX12
 
     int SPD_Versions::GetMaxMipLevelCount(int Width, int Height)
     {
-        bool maxbit = false;
-        int mipLevel = 12;
-        int resolution = Width < Height ? Width : Height;
-        for (int i = 12; i >= 0; --i)
-        {
-            maxbit = (resolution >> i) & 0x1;
-            if (maxbit) {
-                mipLevel = i;
-                break;
-            }
-        }
-
-        return mipLevel;
+        int resolution = max(Width, Height);
+        return (static_cast<int>(min(1.0f + floor(log2(resolution)), 12)) - 1);
     }
 
     void SPD_Versions::OnCreateWindowSizeDependentResources(int Width, int Height, Texture *pInput)

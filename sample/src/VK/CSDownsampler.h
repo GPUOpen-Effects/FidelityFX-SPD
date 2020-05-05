@@ -31,7 +31,7 @@ namespace CAULDRON_VK
         void OnCreate(Device* pDevice, ResourceViewHeaps *pResourceViewHeaps, VkFormat outFormat);
         void OnDestroy();
 
-        void OnCreateWindowSizeDependentResources(uint32_t Width, uint32_t Height, Texture *pInput, int mips);
+        void OnCreateWindowSizeDependentResources(VkCommandBuffer cmd_buf, uint32_t Width, uint32_t Height, Texture *pInput, int mips);
         void OnDestroyWindowSizeDependentResources();
 
         void Draw(VkCommandBuffer cmd_buf);
