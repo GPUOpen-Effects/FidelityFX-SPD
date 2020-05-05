@@ -38,7 +38,7 @@ struct globalAtomicBuffer
 {
     uint counter;
 };
-[[vk::binding(2)]] RWStructuredBuffer<globalAtomicBuffer> globalAtomic;
+[[vk::binding(2)]] globallycoherent RWStructuredBuffer<globalAtomicBuffer> globalAtomic;
 
 #define A_GPU
 #define A_HLSL
@@ -49,27 +49,47 @@ groupshared AU1 spd_counter;
 
 // define fetch and store functions
 #ifndef SPD_PACKED_ONLY
-groupshared AF4 spd_intermediate[16][16];
+groupshared AF1 spd_intermediateR[16][16];
+groupshared AF1 spd_intermediateG[16][16];
+groupshared AF1 spd_intermediateB[16][16];
+groupshared AF1 spd_intermediateA[16][16];
 AF4 SpdLoadSourceImage(ASU2 tex){return imgSrc[tex];}
 AF4 SpdLoad(ASU2 tex){return imgDst[5][tex];}
 void SpdStore(ASU2 pix, AF4 outValue, AU1 index){imgDst[index][pix] = outValue;}
 void SpdIncreaseAtomicCounter(){InterlockedAdd(globalAtomic[0].counter, 1, spd_counter);}
 AU1 SpdGetAtomicCounter(){return spd_counter;}
-AF4 SpdLoadIntermediate(AU1 x, AU1 y){return spd_intermediate[x][y];}
-void SpdStoreIntermediate(AU1 x, AU1 y, AF4 value){spd_intermediate[x][y] = value;}
+AF4 SpdLoadIntermediate(AU1 x, AU1 y){
+    return AF4(
+    spd_intermediateR[x][y], 
+    spd_intermediateG[x][y], 
+    spd_intermediateB[x][y], 
+    spd_intermediateA[x][y]);}
+void SpdStoreIntermediate(AU1 x, AU1 y, AF4 value){
+    spd_intermediateR[x][y] = value.x;
+    spd_intermediateG[x][y] = value.y;
+    spd_intermediateB[x][y] = value.z;
+    spd_intermediateA[x][y] = value.w;}
 AF4 SpdReduce4(AF4 v0, AF4 v1, AF4 v2, AF4 v3){return (v0+v1+v2+v3)*0.25;}
 #endif
 
 // define fetch and store functions Packed
 #ifdef A_HALF
-groupshared AH4 spd_intermediate[16][16];
+groupshared AH2 spd_intermediateRG[16][16];
+groupshared AH2 spd_intermediateBA[16][16];
 AH4 SpdLoadSourceImageH(ASU2 tex){return AH4(imgSrc[tex]);}
 AH4 SpdLoadH(ASU2 p){return AH4(imgDst[5][p]);}
 void SpdStoreH(ASU2 p, AH4 value, AU1 mip){imgDst[mip][p] = AF4(value);}
 void SpdIncreaseAtomicCounter(){InterlockedAdd(globalAtomic[0].counter, 1, spd_counter);}
 AU1 SpdGetAtomicCounter(){return spd_counter;}
-AH4 SpdLoadIntermediateH(AU1 x, AU1 y){return spd_intermediate[x][y];}
-void SpdStoreIntermediateH(AU1 x, AU1 y, AH4 value){spd_intermediate[x][y] = value;}
+AH4 SpdLoadIntermediateH(AU1 x, AU1 y){
+    return AH4(
+    spd_intermediateRG[x][y].x,
+    spd_intermediateRG[x][y].y,
+    spd_intermediateBA[x][y].x,
+    spd_intermediateBA[x][y].y);}
+void SpdStoreIntermediateH(AU1 x, AU1 y, AH4 value){
+    spd_intermediateRG[x][y] = value.xy;
+    spd_intermediateBA[x][y] = value.zw;}
 AH4 SpdReduce4H(AH4 v0, AH4 v1, AH4 v2, AH4 v3){return (v0+v1+v2+v3)*AH1(0.25);}
 #endif
 

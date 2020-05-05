@@ -72,47 +72,11 @@ void SPD_Renderer::OnCreate(Device *pDevice, SwapChain *pSwapChain)
     //
     {
         /* Need attachments for render target and depth buffer */
-        VkAttachmentDescription attachments[1];
+        VkAttachmentDescription depthAttachments;
+        AttachClearBeforeUse(m_shadowMap.GetFormat(), VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, &depthAttachments);
+        m_render_pass_shadow = CreateRenderPassOptimal(m_pDevice->GetDevice(), 0, NULL, &depthAttachments);
 
-        // depth RT
-        attachments[0].format = m_shadowMap.GetFormat();
-        attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
-        attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        attachments[0].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        attachments[0].flags = 0;
-
-        VkAttachmentReference depth_reference = { 0, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
-
-        VkSubpassDescription subpass = {};
-        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-        subpass.flags = 0;
-        subpass.inputAttachmentCount = 0;
-        subpass.pInputAttachments = NULL;
-        subpass.colorAttachmentCount = 0;
-        subpass.pColorAttachments = NULL;
-        subpass.pResolveAttachments = NULL;
-        subpass.pDepthStencilAttachment = &depth_reference;
-        subpass.preserveAttachmentCount = 0;
-        subpass.pPreserveAttachments = NULL;
-
-        VkRenderPassCreateInfo rp_info = {};
-        rp_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-        rp_info.pNext = NULL;
-        rp_info.attachmentCount = 1;
-        rp_info.pAttachments = attachments;
-        rp_info.subpassCount = 1;
-        rp_info.pSubpasses = &subpass;
-        rp_info.dependencyCount = 0;
-        rp_info.pDependencies = NULL;
-
-        VkResult res = vkCreateRenderPass(m_pDevice->GetDevice(), &rp_info, NULL, &m_render_pass_shadow);
-        assert(res == VK_SUCCESS);
-
-        // Create frame buffer
+        // Create frame buffer, its size is now window dependant so we can do this here.
         //
         VkImageView attachmentViews[1] = { m_shadowMapDSV };
         VkFramebufferCreateInfo fb_info = {};
@@ -124,69 +88,30 @@ void SPD_Renderer::OnCreate(Device *pDevice, SwapChain *pSwapChain)
         fb_info.width = m_shadowMap.GetWidth();
         fb_info.height = m_shadowMap.GetHeight();
         fb_info.layers = 1;
-        res = vkCreateFramebuffer(m_pDevice->GetDevice(), &fb_info, NULL, &m_pShadowMapBuffers);
+        VkResult res = vkCreateFramebuffer(m_pDevice->GetDevice(), &fb_info, NULL, &m_pFrameBuffer_shadow);
         assert(res == VK_SUCCESS);
     }
 
-    // Create HDR MSAA render pass color with clear
+    // Create HDR MSAA render pass + clear, for the sky, PBR and Wireframe passes 
     //
     {
-        /* Need attachments for render target and depth buffer */
-        VkAttachmentDescription attachments[2];
+        VkAttachmentDescription colorAttachment, depthAttachment;
+        AttachClearBeforeUse(m_Format, VK_SAMPLE_COUNT_4_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &colorAttachment);
+        AttachClearBeforeUse(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_4_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, &depthAttachment);
+        m_render_pass_HDR_MSAA = CreateRenderPassOptimal(m_pDevice->GetDevice(), 1, &colorAttachment, &depthAttachment);
+    }
 
-        // color MSAA RT
-        attachments[0].format = m_Format;
-        attachments[0].samples = VK_SAMPLE_COUNT_4_BIT;
-        attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        attachments[0].finalLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        attachments[0].flags = 0;
-
-        // depth RT
-        attachments[1].format = VK_FORMAT_D32_SFLOAT;
-        attachments[1].samples = VK_SAMPLE_COUNT_4_BIT;
-        attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        attachments[1].flags = 0;
-
-        VkAttachmentReference color_reference = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
-        VkAttachmentReference depth_reference = { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
-
-        VkSubpassDescription subpass = {};
-        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-        subpass.flags = 0;
-        subpass.inputAttachmentCount = 0;
-        subpass.pInputAttachments = NULL;
-        subpass.colorAttachmentCount = 1;
-        subpass.pColorAttachments = &color_reference;
-        subpass.pResolveAttachments = NULL;
-        subpass.pDepthStencilAttachment = &depth_reference;
-        subpass.preserveAttachmentCount = 0;
-        subpass.pPreserveAttachments = NULL;
-
-        VkRenderPassCreateInfo rp_info = {};
-        rp_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-        rp_info.pNext = NULL;
-        rp_info.attachmentCount = 2;
-        rp_info.pAttachments = attachments;
-        rp_info.subpassCount = 1;
-        rp_info.pSubpasses = &subpass;
-        rp_info.dependencyCount = 0;
-        rp_info.pDependencies = NULL;
-
-        VkResult res = vkCreateRenderPass(m_pDevice->GetDevice(), &rp_info, NULL, &m_render_pass_HDR_MSAA);
-        assert(res == VK_SUCCESS);
+    // Create HDR render pass, for the GUI
+    //
+    {
+        VkAttachmentDescription colorAttachment;
+        AttachBlending(m_Format, VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, &colorAttachment);
+        m_render_pass_PBR_HDR = CreateRenderPassOptimal(m_pDevice->GetDevice(), 1, &colorAttachment, NULL);
     }
 
     m_skyDome.OnCreate(pDevice, m_render_pass_HDR_MSAA, &m_UploadHeap, m_Format, &m_resourceViewHeaps, &m_ConstantBufferRing, &m_VidMemBufferPool, "..\\media\\envmaps\\papermill\\diffuse.dds", "..\\media\\envmaps\\papermill\\specular.dds", VK_SAMPLE_COUNT_4_BIT);
     m_skyDomeProc.OnCreate(pDevice, m_render_pass_HDR_MSAA, &m_UploadHeap, m_Format, &m_resourceViewHeaps, &m_ConstantBufferRing, &m_VidMemBufferPool, VK_SAMPLE_COUNT_4_BIT);
+    m_wireframe.OnCreate(pDevice, m_render_pass_HDR_MSAA, &m_resourceViewHeaps, &m_ConstantBufferRing, &m_VidMemBufferPool, VK_SAMPLE_COUNT_4_BIT);
     m_wireframeBox.OnCreate(pDevice, &m_resourceViewHeaps, &m_ConstantBufferRing, &m_VidMemBufferPool);
 
     // Create downsampling passes
@@ -196,8 +121,8 @@ void SPD_Renderer::OnCreate(Device *pDevice, SwapChain *pSwapChain)
     m_SPD_Versions.OnCreate(pDevice, &m_resourceViewHeaps, m_Format);
 
     // Create tonemapping pass
-    m_toneMapping.OnCreate(m_pDevice, pSwapChain->GetRenderPass(), &m_resourceViewHeaps, &m_SysMemBufferPool, &m_ConstantBufferRing);
-    
+    m_toneMapping.OnCreate(m_pDevice, pSwapChain->GetRenderPass(), &m_resourceViewHeaps, &m_VidMemBufferPool, &m_ConstantBufferRing);
+
     // Initialize UI rendering resources
     m_ImGUI.OnCreate(m_pDevice, pSwapChain->GetRenderPass(), &m_UploadHeap, &m_ConstantBufferRing);
 
@@ -206,6 +131,27 @@ void SPD_Renderer::OnCreate(Device *pDevice, SwapChain *pSwapChain)
     m_VidMemBufferPool.UploadData(m_UploadHeap.GetCommandList());
     m_UploadHeap.FlushAndFinish();
 #endif
+
+    // Create allocator
+    //
+    VkCommandPoolCreateInfo cmd_pool_info = {};
+    cmd_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    cmd_pool_info.pNext = NULL;
+    cmd_pool_info.queueFamilyIndex = pDevice->GetGraphicsQueueFamilyIndex();
+    cmd_pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    VkResult res = vkCreateCommandPool(pDevice->GetDevice(), &cmd_pool_info, NULL, &m_CommandPool);
+    assert(res == VK_SUCCESS);
+
+    // Create command buffers
+    //
+    VkCommandBufferAllocateInfo cmd = {};
+    cmd.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cmd.pNext = NULL;
+    cmd.commandPool = m_CommandPool;
+    cmd.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmd.commandBufferCount = 1;
+    res = vkAllocateCommandBuffers(pDevice->GetDevice(), &cmd, &m_CommandBufferInit);
+    assert(res == VK_SUCCESS);
 }
 
 //--------------------------------------------------------------------------------------
@@ -215,9 +161,10 @@ void SPD_Renderer::OnCreate(Device *pDevice, SwapChain *pSwapChain)
 //--------------------------------------------------------------------------------------
 void SPD_Renderer::OnDestroy()
 {
-    m_toneMapping.OnDestroy();
     m_ImGUI.OnDestroy();
+    m_toneMapping.OnDestroy();
     m_wireframeBox.OnDestroy();
+    m_wireframe.OnDestroy();
     m_skyDomeProc.OnDestroy();
     m_skyDome.OnDestroy();
     m_shadowMap.OnDestroy();
@@ -231,8 +178,9 @@ void SPD_Renderer::OnDestroy()
 
     vkDestroyRenderPass(m_pDevice->GetDevice(), m_render_pass_shadow, nullptr);
     vkDestroyRenderPass(m_pDevice->GetDevice(), m_render_pass_HDR_MSAA, nullptr);
+    vkDestroyRenderPass(m_pDevice->GetDevice(), m_render_pass_PBR_HDR, nullptr);
 
-    vkDestroyFramebuffer(m_pDevice->GetDevice(), m_pShadowMapBuffers, nullptr);
+    vkDestroyFramebuffer(m_pDevice->GetDevice(), m_pFrameBuffer_shadow, nullptr);
 
     m_UploadHeap.OnDestroy();
     m_GPUTimer.OnDestroy();
@@ -240,7 +188,10 @@ void SPD_Renderer::OnDestroy()
     m_SysMemBufferPool.OnDestroy();
     m_ConstantBufferRing.OnDestroy();
     m_resourceViewHeaps.OnDestroy();
-    m_CommandListRing.OnDestroy();    
+    m_CommandListRing.OnDestroy();
+
+    vkFreeCommandBuffers(m_pDevice->GetDevice(), m_CommandPool, 1, &m_CommandBufferInit);
+    vkDestroyCommandPool(m_pDevice->GetDevice(), m_CommandPool, NULL);
 }
 
 //--------------------------------------------------------------------------------------
@@ -281,13 +232,15 @@ void SPD_Renderer::OnCreateWindowSizeDependentResources(SwapChain *pSwapChain, u
 
     // Create Texture + RTV, to hold the resolved scene 
     //
-    m_HDR.InitRenderTarget(m_pDevice, m_Width, m_Height, m_Format, VK_SAMPLE_COUNT_1_BIT, (VkImageUsageFlags)(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT), false, "HDR");
+    m_HDR.InitRenderTarget(m_pDevice, m_Width, m_Height, m_Format, VK_SAMPLE_COUNT_1_BIT, (VkImageUsageFlags)(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT), false, "HDR");
     m_HDR.CreateSRV(&m_HDRSRV);
+    m_HDR.CreateSRV(&m_HDRUAV);
 
     // Create framebuffer for the MSAA RT
     //
     {
         VkImageView attachments[2] = { m_HDRMSAASRV, m_depthBufferView };
+        VkImageView attachments_PBR_HDR[1] = { m_HDRSRV };
 
         VkFramebufferCreateInfo fb_info = {};
         fb_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -301,27 +254,56 @@ void SPD_Renderer::OnCreateWindowSizeDependentResources(SwapChain *pSwapChain, u
 
         VkResult res = vkCreateFramebuffer(m_pDevice->GetDevice(), &fb_info, NULL, &m_pFrameBuffer_HDR_MSAA);
         assert(res == VK_SUCCESS);
+
+        fb_info.attachmentCount = 1;
+        fb_info.pAttachments = attachments_PBR_HDR;
+        fb_info.renderPass = m_render_pass_PBR_HDR;
+        res = vkCreateFramebuffer(m_pDevice->GetDevice(), &fb_info, NULL, &m_pFrameBuffer_PBR_HDR);
+        assert(res == VK_SUCCESS);
     }
 
-    // update bloom and downscaling effect
+    // update downscaling effect
     //
     {
-        bool maxbit = false;
-        int mipLevel = 12;
-        int resolution = m_Width < m_Height ? m_Width : m_Height;
-        for (int i = 12; i >= 0; --i)
+        int resolution = max(m_Width, m_Height);
+        int mipLevel = (static_cast<int>(min(1.0f + floor(log2(resolution)), 12)) - 1);
+
         {
-            maxbit = (resolution >> i) & 0x1;
-            if (maxbit) {
-                mipLevel = i;
-                break;
-            }
+            VkCommandBufferBeginInfo cmd_buf_info;
+            cmd_buf_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            cmd_buf_info.pNext = NULL;
+            cmd_buf_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            cmd_buf_info.pInheritanceInfo = NULL;
+            VkResult res = vkBeginCommandBuffer(m_CommandBufferInit, &cmd_buf_info);
+            assert(res == VK_SUCCESS);
         }
 
         m_PSDownsampler.OnCreateWindowSizeDependentResources(m_Width, m_Height, &m_HDR, mipLevel);
-        m_CSDownsampler.OnCreateWindowSizeDependentResources(m_Width, m_Height, &m_HDR, mipLevel);
-        m_SPD_Versions.OnCreateWindowSizeDependentResources(m_Width, m_Height, &m_HDR);
+        m_CSDownsampler.OnCreateWindowSizeDependentResources(m_CommandBufferInit, m_Width, m_Height, &m_HDR, mipLevel);
+        m_SPD_Versions.OnCreateWindowSizeDependentResources(m_CommandBufferInit, m_Width, m_Height, &m_HDR);
+
+        {
+            VkResult res = vkEndCommandBuffer(m_CommandBufferInit);
+            assert(res == VK_SUCCESS);
+
+            VkSubmitInfo submit_info;
+            submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            submit_info.pNext = NULL;
+            submit_info.waitSemaphoreCount = 0;
+            submit_info.pWaitSemaphores = NULL;
+            submit_info.pWaitDstStageMask = NULL;
+            submit_info.commandBufferCount = 1;
+            submit_info.pCommandBuffers = &m_CommandBufferInit;
+            submit_info.signalSemaphoreCount = 0;
+            submit_info.pSignalSemaphores = NULL;
+            res = vkQueueSubmit(m_pDevice->GetGraphicsQueue(), 1, &submit_info, VK_NULL_HANDLE);
+            assert(res == VK_SUCCESS);
+        }
     }
+
+    m_toneMapping.UpdatePipelines(pSwapChain->GetRenderPass()),
+
+    m_ImGUI.UpdatePipeline(pSwapChain->GetRenderPass());
 }
 
 //--------------------------------------------------------------------------------------
@@ -340,10 +322,12 @@ void SPD_Renderer::OnDestroyWindowSizeDependentResources()
     m_depthBuffer.OnDestroy();
 
     vkDestroyFramebuffer(m_pDevice->GetDevice(), m_pFrameBuffer_HDR_MSAA, nullptr);
+    vkDestroyFramebuffer(m_pDevice->GetDevice(), m_pFrameBuffer_PBR_HDR, nullptr);
 
     vkDestroyImageView(m_pDevice->GetDevice(), m_depthBufferView, nullptr);
     vkDestroyImageView(m_pDevice->GetDevice(), m_HDRMSAASRV, nullptr);
-    vkDestroyImageView(m_pDevice->GetDevice(), m_HDRSRV, nullptr);   
+    vkDestroyImageView(m_pDevice->GetDevice(), m_HDRSRV, nullptr);
+    vkDestroyImageView(m_pDevice->GetDevice(), m_HDRUAV, nullptr);
 }
 
 //--------------------------------------------------------------------------------------
@@ -442,7 +426,7 @@ int SPD_Renderer::LoadScene(GLTFCommon *pGLTFCommon, int stage)
         &m_ConstantBufferRing,
         &m_VidMemBufferPool,
         m_pGLTFTexturesAndBuffers,
-        &m_Wireframe
+        &m_wireframe
         );
 #if (USE_VID_MEM==true)
         // we are borrowing the upload heap command list for uploading to the GPU the IBs and VBs
@@ -513,7 +497,6 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
     // Let our resource managers do some house keeping 
     //
     m_ConstantBufferRing.OnBeginFrame();
-    m_CommandListRing.OnBeginFrame();
 
     // command buffer calls
     //    
@@ -538,30 +521,9 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
     {
         pPerFrame = m_pGLTFTexturesAndBuffers->m_pGLTFCommon->SetPerFrameData(pState->camera);
 
-        //override gltf camera with ours
-        pPerFrame->mCameraViewProj = pState->camera.GetView() * pState->camera.GetProjection();
-        pPerFrame->cameraPos = pState->camera.GetPosition();
+        // Set some lighting factors
         pPerFrame->iblFactor = pState->iblFactor;
         pPerFrame->emmisiveFactor = pState->emmisiveFactor;
-
-        //if the gltf doesn't have any lights set some spotlights
-        if (pPerFrame->lightCount == 0)
-        {
-            pPerFrame->lightCount = pState->spotlightCount;
-            for (uint32_t i = 0; i < pState->spotlightCount; i++)
-            {
-                GetXYZ(pPerFrame->lights[i].color, pState->spotlight[i].color);
-                GetXYZ(pPerFrame->lights[i].position, pState->spotlight[i].light.GetPosition());
-                GetXYZ(pPerFrame->lights[i].direction, pState->spotlight[i].light.GetDirection());
-
-                pPerFrame->lights[i].range = 15; //in meters
-                pPerFrame->lights[i].type = LightType_Spot;
-                pPerFrame->lights[i].intensity = pState->spotlight[i].intensity;
-                pPerFrame->lights[i].innerConeCos = cosf(pState->spotlight[i].light.GetFovV()*0.9f/2.0f);
-                pPerFrame->lights[i].outerConeCos = cosf(pState->spotlight[i].light.GetFovV() / 2.0f);
-                pPerFrame->lights[i].mLightViewProj = pState->spotlight[i].light.GetView() * pState->spotlight[i].light.GetProjection();
-            }
-        }
 
         // Up to 4 spotlights can have shadowmaps. Each spot the light has a shadowMap index which is used to find the sadowmap in the atlas
         uint32_t shadowMapIndex = 0;
@@ -569,13 +531,22 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
         {
             if ((shadowMapIndex < 4) && (pPerFrame->lights[i].type == LightType_Spot))
             {
-                pPerFrame->lights[i].shadowMapIndex = shadowMapIndex++; //set the shadowmap index so the color pass knows which shadow map to use
+                pPerFrame->lights[i].shadowMapIndex = shadowMapIndex++; // set the shadowmap index
                 pPerFrame->lights[i].depthBias = 70.0f / 100000.0f;
             }
+            else if ((shadowMapIndex < 4) && (pPerFrame->lights[i].type == LightType_Directional))
+            {
+                pPerFrame->lights[i].shadowMapIndex = shadowMapIndex++; // set the shadowmap index
+                pPerFrame->lights[i].depthBias = 1000.0f / 100000.0f;
+            }
+            else
+            {
+                pPerFrame->lights[i].shadowMapIndex = -1;   // no shadow for this light
+            }
+
         }
 
         m_pGLTFTexturesAndBuffers->SetPerFrameConstants();
-
         m_pGLTFTexturesAndBuffers->SetSkinningMatricesForSkeletons();
     }
 
@@ -594,7 +565,7 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
             rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
             rp_begin.pNext = NULL;
             rp_begin.renderPass = m_render_pass_shadow;
-            rp_begin.framebuffer = m_pShadowMapBuffers;
+            rp_begin.framebuffer = m_pFrameBuffer_shadow;
             rp_begin.renderArea.offset.x = 0;
             rp_begin.renderArea.offset.y = 0;
             rp_begin.renderArea.extent.width = m_shadowMap.GetWidth();
@@ -609,10 +580,10 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
         uint32_t shadowMapIndex = 0;
         for (uint32_t i = 0; i < pPerFrame->lightCount; i++)
         {
-            if (pPerFrame->lights[i].type != LightType_Spot)
+            if (pPerFrame->lights[i].type != LightType_Spot || pPerFrame->lights[i].type == LightType_Directional)
                 continue;
 
-            // Set the RT's quadrant where to render the shadomap (these viewport offsets need to match the ones in shadowFiltering.h)
+            // Set the RT's quadrant where to render the shadowmap (these viewport offsets need to match the ones in shadowFiltering.h)
             uint32_t viewportOffsetsX[4] = { 0, 1, 0, 1 };
             uint32_t viewportOffsetsY[4] = { 0, 0, 1, 1 };
             uint32_t viewportWidth = m_shadowMap.GetWidth() / 2;
@@ -635,39 +606,38 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
 
     // Render Scene to the MSAA HDR RT ------------------------------------------------
     //
-    SetPerfMarkerBegin(cmd_buf, "Color pass");
+    {
+        SetPerfMarkerBegin(cmd_buf, "Color pass");
+        m_GPUTimer.GetTimeStamp(cmd_buf, "before color RP");
+        VkClearValue clear_values[2];
+        clear_values[0].color.float32[0] = 0.0f;
+        clear_values[0].color.float32[1] = 0.0f;
+        clear_values[0].color.float32[2] = 0.0f;
+        clear_values[0].color.float32[3] = 0.0f;
+        clear_values[1].depthStencil.depth = 1.0f;
+        clear_values[1].depthStencil.stencil = 0;
+
+        VkRenderPassBeginInfo rp_begin;
+        rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        rp_begin.pNext = NULL;
+        rp_begin.renderPass = m_render_pass_HDR_MSAA;
+        rp_begin.framebuffer = m_pFrameBuffer_HDR_MSAA;
+        rp_begin.renderArea.offset.x = 0;
+        rp_begin.renderArea.offset.y = 0;
+        rp_begin.renderArea.extent.width = m_Width;
+        rp_begin.renderArea.extent.height = m_Height;
+        rp_begin.clearValueCount = 2;
+        rp_begin.pClearValues = clear_values;
+
+        vkCmdBeginRenderPass(cmd_buf, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+
+        vkCmdSetScissor(cmd_buf, 0, 1, &m_scissor);
+        vkCmdSetViewport(cmd_buf, 0, 1, &m_viewport);
+        m_GPUTimer.GetTimeStamp(cmd_buf, "after color RP");
+    }
 
     if (pPerFrame != NULL)
     {
-        {
-            m_GPUTimer.GetTimeStamp(cmd_buf, "before color RP");
-            VkClearValue clear_values[2];
-            clear_values[0].color.float32[0] = 0.0f;
-            clear_values[0].color.float32[1] = 0.0f;
-            clear_values[0].color.float32[2] = 0.0f;
-            clear_values[0].color.float32[3] = 0.0f;
-            clear_values[1].depthStencil.depth = 1.0f;
-            clear_values[1].depthStencil.stencil = 0;
-
-            VkRenderPassBeginInfo rp_begin;
-            rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            rp_begin.pNext = NULL;
-            rp_begin.renderPass = m_render_pass_HDR_MSAA;
-            rp_begin.framebuffer = m_pFrameBuffer_HDR_MSAA;
-            rp_begin.renderArea.offset.x = 0;
-            rp_begin.renderArea.offset.y = 0;
-            rp_begin.renderArea.extent.width = m_Width;
-            rp_begin.renderArea.extent.height = m_Height;
-            rp_begin.clearValueCount = 2;
-            rp_begin.pClearValues = clear_values;
-
-            vkCmdBeginRenderPass(cmd_buf, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
-
-            vkCmdSetScissor(cmd_buf, 0, 1, &m_scissor);
-            vkCmdSetViewport(cmd_buf, 0, 1, &m_viewport);
-            m_GPUTimer.GetTimeStamp(cmd_buf, "after color RP");
-        }
-
         // Render skydome
         //
         if (pState->skyDomeType == 1)
@@ -698,7 +668,7 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
         if (m_gltfBBox && pPerFrame != NULL)
         {
             m_gltfPBR->Draw(cmd_buf);
-            m_GPUTimer.GetTimeStamp(cmd_buf, "Rendering Scene");            
+            m_GPUTimer.GetTimeStamp(cmd_buf, "Rendering Scene");
         }
 
         // draw object's bounding boxes
@@ -726,41 +696,57 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
             {
                 XMMATRIX spotlightMatrix = XMMatrixInverse(NULL, pPerFrame->lights[i].mLightViewProj);
                 XMMATRIX worldMatrix = spotlightMatrix * pPerFrame->mCameraViewProj;
-                m_wireframeBox.Draw(cmd_buf, &m_Wireframe, worldMatrix, vCenter, vRadius, vColor);
+                m_wireframeBox.Draw(cmd_buf, &m_wireframe, worldMatrix, vCenter, vRadius, vColor);
             }
 
             m_GPUTimer.GetTimeStamp(cmd_buf, "Light's frustum");
 
             SetPerfMarkerEnd(cmd_buf);
         }
-
-        vkCmdEndRenderPass(cmd_buf);
     }
 
-    SetPerfMarkerEnd(cmd_buf);
+    {
+        vkCmdEndRenderPass(cmd_buf);
+        SetPerfMarkerEnd(cmd_buf);
+    }
 
     // Resolve MSAA ------------------------------------------------------------------------
     //
     {
         SetPerfMarkerBegin(cmd_buf, "resolve MSAA");
         {
-            VkImageMemoryBarrier barrier = {};
-            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            barrier.pNext = NULL;
-            barrier.srcAccessMask = 0;
-            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            barrier.subresourceRange.baseMipLevel = 0;
-            barrier.subresourceRange.levelCount = 1;
-            barrier.subresourceRange.baseArrayLayer = 0;
-            barrier.subresourceRange.layerCount = 1;
-            barrier.image = m_HDR.Resource();
+            VkImageMemoryBarrier barrier[2] = {};
+            barrier[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier[0].pNext = NULL;
+            barrier[0].srcAccessMask = 0;
+            barrier[0].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier[0].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            barrier[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barrier[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            barrier[0].subresourceRange.baseMipLevel = 0;
+            barrier[0].subresourceRange.levelCount = 1;
+            barrier[0].subresourceRange.baseArrayLayer = 0;
+            barrier[0].subresourceRange.layerCount = 1;
+            barrier[0].image = m_HDR.Resource();
 
-            vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
+            barrier[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier[1].pNext = NULL;
+            barrier[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            barrier[1].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            barrier[1].oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            barrier[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            barrier[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier[1].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            barrier[1].subresourceRange.baseMipLevel = 0;
+            barrier[1].subresourceRange.levelCount = 1;
+            barrier[1].subresourceRange.baseArrayLayer = 0;
+            barrier[1].subresourceRange.layerCount = 1;
+            barrier[1].image = m_HDRMSAA.Resource();
+
+            vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 2, barrier);
         }
 
         {
@@ -780,43 +766,38 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
         }
 
         {
-            VkImageMemoryBarrier barrier = {};
-            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            barrier.pNext = NULL;
-            barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL; // we need to read from it for the post-processing
-            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            barrier.subresourceRange.baseMipLevel = 0;
-            barrier.subresourceRange.levelCount = 1;
-            barrier.subresourceRange.baseArrayLayer = 0;
-            barrier.subresourceRange.layerCount = 1;
-            barrier.image = m_HDR.Resource();
+            VkImageMemoryBarrier barrier[2] = {};
+            barrier[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier[0].pNext = NULL;
+            barrier[0].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            barrier[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barrier[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; // we need to read from it for the post-processing
+            barrier[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            barrier[0].subresourceRange.baseMipLevel = 0;
+            barrier[0].subresourceRange.levelCount = 1;
+            barrier[0].subresourceRange.baseArrayLayer = 0;
+            barrier[0].subresourceRange.layerCount = 1;
+            barrier[0].image = m_HDR.Resource();
 
-            vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
-        }
+            barrier[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier[1].pNext = NULL;
+            barrier[1].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            barrier[1].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            barrier[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            barrier[1].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            barrier[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier[1].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            barrier[1].subresourceRange.baseMipLevel = 0;
+            barrier[1].subresourceRange.levelCount = 1;
+            barrier[1].subresourceRange.baseArrayLayer = 0;
+            barrier[1].subresourceRange.layerCount = 1;
+            barrier[1].image = m_HDRMSAA.Resource();
 
-        {
-            VkImageMemoryBarrier barrier = {};
-            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            barrier.pNext = NULL;
-            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; // we need to read from it for the post-processing
-            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            barrier.subresourceRange.baseMipLevel = 0;
-            barrier.subresourceRange.levelCount = 1;
-            barrier.subresourceRange.baseArrayLayer = 0;
-            barrier.subresourceRange.layerCount = 1;
-            barrier.image = m_HDR.Resource();
-
-            vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
+            vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, NULL, 0, NULL, 2, barrier);
         }
 
         m_GPUTimer.GetTimeStamp(cmd_buf, "Resolve");
@@ -854,98 +835,108 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
     }
 
     {
-        VkImageMemoryBarrier barrier = {};
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.pNext = NULL;
-        barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        barrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; // we need to read from it for the post-processing
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        barrier.subresourceRange.baseMipLevel = 0;
-        barrier.subresourceRange.levelCount = 1;
-        barrier.subresourceRange.baseArrayLayer = 0;
-        barrier.subresourceRange.layerCount = 1;
-        barrier.image = m_HDR.Resource();
+        VkResult res = vkEndCommandBuffer(cmd_buf);
+        assert(res == VK_SUCCESS);
 
-        vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
-
-        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; // we need to read from it for the post-processing
-        vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
+        VkSubmitInfo submit_info;
+        submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit_info.pNext = NULL;
+        submit_info.waitSemaphoreCount = 0;
+        submit_info.pWaitSemaphores = NULL;
+        submit_info.pWaitDstStageMask = NULL;
+        submit_info.commandBufferCount = 1;
+        submit_info.pCommandBuffers = &cmd_buf;
+        submit_info.signalSemaphoreCount = 0;
+        submit_info.pSignalSemaphores = NULL;
+        res = vkQueueSubmit(m_pDevice->GetGraphicsQueue(), 1, &submit_info, VK_NULL_HANDLE);
+        assert(res == VK_SUCCESS);
     }
+    
 
     // Wait for swapchain (we are going to render to it) -----------------------------------
     //
 
     int imageIndex = pSwapChain->WaitForSwapChain();
-    SetPerfMarkerBegin(cmd_buf, "rendering to swap chain");
+
+    m_CommandListRing.OnBeginFrame();
+
+    VkCommandBuffer cmdBuf2 = m_CommandListRing.GetNewCommandList();
+
+    {
+        VkCommandBufferBeginInfo cmd_buf_info;
+        cmd_buf_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        cmd_buf_info.pNext = NULL;
+        cmd_buf_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        cmd_buf_info.pInheritanceInfo = NULL;
+        VkResult res = vkBeginCommandBuffer(cmdBuf2, &cmd_buf_info);
+        assert(res == VK_SUCCESS);
+    }
+    SetPerfMarkerBegin(cmdBuf2, "rendering to swap chain");
+
+    // prepare render pass
+    {
+        VkRenderPassBeginInfo rp_begin = {};
+        rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        rp_begin.pNext = NULL;
+        rp_begin.renderPass = pSwapChain->GetRenderPass();
+        rp_begin.framebuffer = pSwapChain->GetFramebuffer(imageIndex);
+        rp_begin.renderArea.offset.x = 0;
+        rp_begin.renderArea.offset.y = 0;
+        rp_begin.renderArea.extent.width = m_Width;
+        rp_begin.renderArea.extent.height = m_Height;
+        rp_begin.clearValueCount = 0;
+        rp_begin.pClearValues = NULL;
+        vkCmdBeginRenderPass(cmdBuf2, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+    }
+
+    vkCmdSetScissor(cmdBuf2, 0, 1, &m_scissor);
+    vkCmdSetViewport(cmdBuf2, 0, 1, &m_viewport);
 
     // Tonemapping ------------------------------------------------------------------------
-    //
+        //
     {
-        // prepare render pass
-        {
-            VkRenderPassBeginInfo rp_begin = {};
-            rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            rp_begin.pNext = NULL;
-            rp_begin.renderPass = pSwapChain->GetRenderPass();
-            rp_begin.framebuffer = pSwapChain->GetFramebuffer(imageIndex);
-            rp_begin.renderArea.offset.x = 0;
-            rp_begin.renderArea.offset.y = 0;
-            rp_begin.renderArea.extent.width = m_Width;
-            rp_begin.renderArea.extent.height = m_Height;
-            rp_begin.clearValueCount = 0;
-            rp_begin.pClearValues = NULL;
-            vkCmdBeginRenderPass(cmd_buf, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
-        }
-
-        vkCmdSetScissor(cmd_buf, 0, 1, &m_scissor);
-        vkCmdSetViewport(cmd_buf, 0, 1, &m_viewport);
-
-        m_toneMapping.Draw(cmd_buf, m_HDRSRV, pState->exposure, pState->toneMapper);
-
-        m_GPUTimer.GetTimeStamp(cmd_buf, "Tone mapping");
+        m_toneMapping.Draw(cmdBuf2, m_HDRSRV, pState->exposure, pState->toneMapper);
+        m_GPUTimer.GetTimeStamp(cmdBuf2, "Tone mapping");
     }
 
     // Render HUD  ------------------------------------------------------------------------
     //
     {
-        m_ImGUI.Draw(cmd_buf);
-        m_GPUTimer.GetTimeStamp(cmd_buf, "ImGUI Rendering");
+        m_ImGUI.Draw(cmdBuf2);
+        m_GPUTimer.GetTimeStamp(cmdBuf2, "ImGUI Rendering");
     }
 
-    SetPerfMarkerEnd(cmd_buf);
+    SetPerfMarkerEnd(cmdBuf2);
 
     m_GPUTimer.OnEndFrame();
 
-    vkCmdEndRenderPass(cmd_buf);
+    vkCmdEndRenderPass(cmdBuf2);
 
-    VkResult res = vkEndCommandBuffer(cmd_buf);
-    assert(res == VK_SUCCESS);
-    
+
     // Close & Submit the command list ----------------------------------------------------
     //
-    VkSemaphore ImageAvailableSemaphore;
-    VkSemaphore RenderFinishedSemaphores;
-    VkFence CmdBufExecutedFences;
-    pSwapChain->GetSemaphores(&ImageAvailableSemaphore, &RenderFinishedSemaphores, &CmdBufExecutedFences);
+    {
+        VkResult res = vkEndCommandBuffer(cmdBuf2);
+        assert(res == VK_SUCCESS);
 
-    VkPipelineStageFlags submitWaitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    const VkCommandBuffer cmd_bufs[] = { cmd_buf };
-    VkSubmitInfo submit_info;
-    submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit_info.pNext = NULL;
-    submit_info.waitSemaphoreCount = 1;
-    submit_info.pWaitSemaphores = &ImageAvailableSemaphore;
-    submit_info.pWaitDstStageMask = &submitWaitStage;
-    submit_info.commandBufferCount = 1;
-    submit_info.pCommandBuffers = cmd_bufs;
-    submit_info.signalSemaphoreCount = 1;
-    submit_info.pSignalSemaphores = &RenderFinishedSemaphores;
+        VkSemaphore ImageAvailableSemaphore;
+        VkSemaphore RenderFinishedSemaphores;
+        VkFence CmdBufExecutedFences;
+        pSwapChain->GetSemaphores(&ImageAvailableSemaphore, &RenderFinishedSemaphores, &CmdBufExecutedFences);
 
-    res = vkQueueSubmit(m_pDevice->GetGraphicsQueue(), 1, &submit_info, CmdBufExecutedFences);
-    assert(res == VK_SUCCESS);
+        VkPipelineStageFlags submitWaitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        VkSubmitInfo submit_info;
+        submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit_info.pNext = NULL;
+        submit_info.waitSemaphoreCount = 1;
+        submit_info.pWaitSemaphores = &ImageAvailableSemaphore;
+        submit_info.pWaitDstStageMask = &submitWaitStage;
+        submit_info.commandBufferCount = 1;
+        submit_info.pCommandBuffers = &cmdBuf2;
+        submit_info.signalSemaphoreCount = 1;
+        submit_info.pSignalSemaphores = &RenderFinishedSemaphores;
+
+        res = vkQueueSubmit(m_pDevice->GetGraphicsQueue(), 1, &submit_info, CmdBufExecutedFences);
+        assert(res == VK_SUCCESS);
+    }
 }

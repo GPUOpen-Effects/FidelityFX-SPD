@@ -142,7 +142,7 @@ namespace CAULDRON_DX12
                 1, 
                 0, 
                 D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS),
-            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
         // Create views for the mip chain
         //
@@ -172,7 +172,17 @@ namespace CAULDRON_DX12
 
     void CSDownsampler::OnDestroy()
     {
-        m_pRootSignature->Release();
+        if (m_pPipeline != NULL)
+        {
+            m_pPipeline->Release();
+            m_pPipeline = NULL;
+        }
+
+        if (m_pRootSignature != NULL)
+        {
+            m_pRootSignature->Release();
+            m_pRootSignature = NULL;
+        }
     }
 
     void CSDownsampler::Draw(ID3D12GraphicsCommandList* pCommandList)
@@ -183,7 +193,7 @@ namespace CAULDRON_DX12
         //
         for (int i = 0; i < m_mipCount; i++)
         {
-            pCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(m_result.GetResource(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, i));
+            pCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(m_result.GetResource(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, i));
 
             D3D12_GPU_VIRTUAL_ADDRESS cbHandle;
             uint32_t* pConstMem;
@@ -219,7 +229,7 @@ namespace CAULDRON_DX12
             uint32_t dispatchZ = 1;
             pCommandList->Dispatch(dispatchX, dispatchY, dispatchZ);
 
-            pCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(m_result.GetResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, i));
+            pCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(m_result.GetResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, i));
         }
     }
 

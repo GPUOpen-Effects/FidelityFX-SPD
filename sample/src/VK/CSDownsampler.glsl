@@ -29,7 +29,7 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 // Push Constants
 //--------------------------------------------------------------------------------------
 layout(push_constant) uniform pushConstants {
-    vec2 u_outputTextureSize; // probably not needed?
+    vec2 u_outputTextureSize;
     vec2 u_inputInvTextureSize;
 } myPerMip;
 

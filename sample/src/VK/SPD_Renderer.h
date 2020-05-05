@@ -22,7 +22,7 @@
 #include "PSDownsampler.h"
 #include "SPD_Versions.h"
 
-static const int backBufferCount = 2;
+static const int backBufferCount = 3;
 
 #define USE_VID_MEM true
 
@@ -119,6 +119,9 @@ private:
     CSDownsampler                   m_CSDownsampler;
     SPD_Versions                    m_SPD_Versions;
 
+    VkCommandPool                   m_CommandPool;
+    VkCommandBuffer                 m_CommandBufferInit;
+
     // GUI
     ImGUI                           m_ImGUI;
 
@@ -135,21 +138,24 @@ private:
 
     // MSAA RT
     Texture                         m_HDRMSAA;
-    VkImageView                     m_HDRSRV;
     VkImageView                     m_HDRMSAASRV;
 
     // Resolved RT
     Texture                         m_HDR;
+    VkImageView                     m_HDRSRV;
+    VkImageView                     m_HDRUAV;
 
     // widgets
-    Wireframe                       m_Wireframe;
+    Wireframe                       m_wireframe;
     WireframeBox                    m_wireframeBox;
 
     VkRenderPass                    m_render_pass_shadow;
     VkRenderPass                    m_render_pass_HDR_MSAA;
+    VkRenderPass                    m_render_pass_PBR_HDR;
 
-    VkFramebuffer                   m_pShadowMapBuffers;
+    VkFramebuffer                   m_pFrameBuffer_shadow;
     VkFramebuffer                   m_pFrameBuffer_HDR_MSAA;
+    VkFramebuffer                   m_pFrameBuffer_PBR_HDR;
 
     std::vector<TimeStamp>          m_TimeStamps;
 
