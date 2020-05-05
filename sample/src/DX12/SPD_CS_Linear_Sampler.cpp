@@ -168,7 +168,7 @@ namespace CAULDRON_DX12
                 1, 
                 0, 
                 D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS),
-            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
         // Create views for the mip chain
         //
@@ -193,12 +193,23 @@ namespace CAULDRON_DX12
 
     void SPD_CS_Linear_Sampler::OnDestroyWindowSizeDependentResources()
     {
+        m_globalCounterBuffer.OnDestroy();
         m_result.OnDestroy();
     }
 
     void SPD_CS_Linear_Sampler::OnDestroy()
     {
-        m_pRootSignature->Release();
+        if (m_pPipeline != NULL)
+        {
+            m_pPipeline->Release();
+            m_pPipeline = NULL;
+        }
+
+        if (m_pRootSignature != NULL)
+        {
+            m_pRootSignature->Release();
+            m_pRootSignature = NULL;
+        }
     }
 
     void SPD_CS_Linear_Sampler::Draw(ID3D12GraphicsCommandList2* pCommandList)
@@ -246,13 +257,16 @@ namespace CAULDRON_DX12
         D3D12_WRITEBUFFERIMMEDIATE_PARAMETER pParams = { m_globalCounterBuffer.GetResource()->GetGPUVirtualAddress(), 0 };
         pCommandList->WriteBufferImmediate(1, &pParams, NULL);
 
-        pCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(m_globalCounterBuffer.GetResource(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, 0));
+        D3D12_RESOURCE_BARRIER resourceBarriers[2] = {
+            CD3DX12_RESOURCE_BARRIER::Transition(m_globalCounterBuffer.GetResource(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, 0),
+            CD3DX12_RESOURCE_BARRIER::Transition(m_result.GetResource(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+        };
+        pCommandList->ResourceBarrier(2, resourceBarriers);
 
         // Dispatch
         //
-        pCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(m_result.GetResource(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
         pCommandList->Dispatch(dispatchX, dispatchY, dispatchZ);
-        pCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(m_result.GetResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+        pCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(m_result.GetResource(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE));
     }
 
     void SPD_CS_Linear_Sampler::Gui()

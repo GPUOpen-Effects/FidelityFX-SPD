@@ -26,7 +26,7 @@ namespace CAULDRON_DX12
     enum class SPD_Version
     {
         SPD_No_WaveOps,
-        SPD_WaveOps, // not supported
+        SPD_WaveOps,
     };
 
     enum class SPD_Packed
@@ -35,7 +35,6 @@ namespace CAULDRON_DX12
         SPD_Packed,
     };
 
-    // Implements a simple separable gaussian blur
     class SPD_Versions
     {
     public:

@@ -38,7 +38,7 @@ void SPD_Renderer::OnCreate(Device* pDevice, SwapChain *pSwapChain)
     const uint32_t cbvDescriptorCount = 2000;
     const uint32_t srvDescriptorCount = 2000;
     const uint32_t uavDescriptorCount = 10;
-    const uint32_t dsvDescriptorCount = 3;
+    const uint32_t dsvDescriptorCount = 10;
     const uint32_t rtvDescriptorCount = 60;
     const uint32_t samplerDescriptorCount = 20;
     m_resourceViewHeaps.OnCreate(pDevice, cbvDescriptorCount, srvDescriptorCount, uavDescriptorCount, dsvDescriptorCount, rtvDescriptorCount, samplerDescriptorCount);
@@ -75,8 +75,8 @@ void SPD_Renderer::OnCreate(Device* pDevice, SwapChain *pSwapChain)
 
     m_skyDome.OnCreate(pDevice, &m_UploadHeap, &m_resourceViewHeaps, &m_ConstantBufferRing, &m_VidMemBufferPool, "..\\media\\envmaps\\papermill\\diffuse.dds", "..\\media\\envmaps\\papermill\\specular.dds", DXGI_FORMAT_R16G16B16A16_FLOAT, 4);
     m_skyDomeProc.OnCreate(pDevice, &m_resourceViewHeaps, &m_ConstantBufferRing, &m_VidMemBufferPool, m_format, 4);
+    m_wireframe.OnCreate(pDevice, &m_resourceViewHeaps, &m_ConstantBufferRing, &m_VidMemBufferPool, DXGI_FORMAT_R16G16B16A16_FLOAT, 4);
     m_wireframeBox.OnCreate(pDevice, &m_resourceViewHeaps, &m_ConstantBufferRing, &m_VidMemBufferPool);
-
 
     m_PSDownsampler.OnCreate(pDevice, &m_resourceViewHeaps, &m_ConstantBufferRing, &m_VidMemBufferPool, m_format);
     m_CSDownsampler.OnCreate(pDevice, &m_resourceViewHeaps, &m_ConstantBufferRing, m_format);
@@ -115,6 +115,7 @@ void SPD_Renderer::OnDestroy()
     m_SPD_Versions.OnDestroy();
 
     m_wireframeBox.OnDestroy();
+    m_wireframe.OnDestroy();
     m_skyDomeProc.OnDestroy();
     m_skyDome.OnDestroy();
     m_shadowMap.OnDestroy();
@@ -163,20 +164,11 @@ void SPD_Renderer::OnCreateWindowSizeDependentResources(SwapChain *pSwapChain, u
     m_HDR.CreateSRV(0, &m_HDRSRV);
     m_HDR.CreateRTV(0, &m_HDRRTV);   
 
-    // update bloom and downscaling effect
+    // update downscaling effect
     //
     {
-        bool maxbit = false;
-        int mipLevel = 12;
-        int resolution = m_Width < m_Height ? m_Width : m_Height;
-        for (int i = 12; i >= 0; --i)
-        {
-            maxbit = (resolution >> i) & 0x1;
-            if (maxbit) {
-                mipLevel = i;
-                break;
-            }
-        }
+        int resolution = max(m_Width, m_Height);
+        int mipLevel = (static_cast<int>(min(1.0f + floor(log2(resolution)), 12)) - 1);
 
         m_PSDownsampler.OnCreateWindowSizeDependentResources(m_Width, m_Height, &m_HDR, mipLevel);
         m_CSDownsampler.OnCreateWindowSizeDependentResources(m_Width, m_Height, &m_HDR, mipLevel);
@@ -268,7 +260,7 @@ int SPD_Renderer::LoadScene(GLTFCommon *pGLTFCommon, int stage)
             m_pGLTFTexturesAndBuffers,
             &m_skyDome,
             false,
-            DXGI_FORMAT_R16G16B16A16_FLOAT,
+            m_HDRMSAA.GetFormat(),
             DXGI_FORMAT_UNKNOWN,
             DXGI_FORMAT_UNKNOWN,
             4
@@ -287,7 +279,7 @@ int SPD_Renderer::LoadScene(GLTFCommon *pGLTFCommon, int stage)
             &m_ConstantBufferRing,
             &m_VidMemBufferPool,
             m_pGLTFTexturesAndBuffers,
-            &m_Wireframe
+            &m_wireframe
         );
 #if (USE_VID_MEM==true)
         // we are borrowing the upload heap command list for uploading to the GPU the IBs and VBs
@@ -373,44 +365,31 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
     {
         pPerFrame = m_pGLTFTexturesAndBuffers->m_pGLTFCommon->SetPerFrameData(pState->camera);
 
-        //override gltf camera with ours
-        pPerFrame->mCameraViewProj = pState->camera.GetView() * pState->camera.GetProjection();
-        pPerFrame->cameraPos = pState->camera.GetPosition();
+        // Set some lighting factors
         pPerFrame->iblFactor = pState->iblFactor;
         pPerFrame->emmisiveFactor = pState->emmisiveFactor;
 
-        //if the gltf doesn't have any lights set some spotlights
-        if (pPerFrame->lightCount == 0)
-        {
-            pPerFrame->lightCount = pState->spotlightCount;
-            for (uint32_t i = 0; i < pState->spotlightCount; i++)
-            {
-                GetXYZ(pPerFrame->lights[i].color, pState->spotlight[i].color);
-                GetXYZ(pPerFrame->lights[i].position, pState->spotlight[i].light.GetPosition());
-                GetXYZ(pPerFrame->lights[i].direction, pState->spotlight[i].light.GetDirection());
-
-                pPerFrame->lights[i].range = 15; //in meters
-                pPerFrame->lights[i].type = LightType_Spot;
-                pPerFrame->lights[i].intensity = pState->spotlight[i].intensity;
-                pPerFrame->lights[i].innerConeCos = cosf(pState->spotlight[i].light.GetFovV()*0.9f / 2.0f);
-                pPerFrame->lights[i].outerConeCos = cosf(pState->spotlight[i].light.GetFovV() / 2.0f);
-                pPerFrame->lights[i].mLightViewProj = pState->spotlight[i].light.GetView() * pState->spotlight[i].light.GetProjection();
-            }
-        }
-
-        // Up to 4 spotlights can have shadowmaps. Each spot the light has a shadowMap index which is used to find the sadowmap in the atlas
+        // Set shadowmaps bias and an index that indicates the rectangle of the atlas in which depth will be rendered
         uint32_t shadowMapIndex = 0;
         for (uint32_t i = 0; i < pPerFrame->lightCount; i++)
         {
             if ((shadowMapIndex < 4) && (pPerFrame->lights[i].type == LightType_Spot))
             {
-                pPerFrame->lights[i].shadowMapIndex = shadowMapIndex++; //set the shadowmap index so the color pass knows which shadow map to use
+                pPerFrame->lights[i].shadowMapIndex = shadowMapIndex++; // set the shadowmap index
                 pPerFrame->lights[i].depthBias = 70.0f / 100000.0f;
+            }
+            else if ((shadowMapIndex < 4) && (pPerFrame->lights[i].type == LightType_Directional))
+            {
+                pPerFrame->lights[i].shadowMapIndex = shadowMapIndex++; // set the shadowmap index
+                pPerFrame->lights[i].depthBias = 1000.0f / 100000.0f;
+            }
+            else
+            {
+                pPerFrame->lights[i].shadowMapIndex = -1;   // no shadow for this light
             }
         }
 
         m_pGLTFTexturesAndBuffers->SetPerFrameConstants();
-
         m_pGLTFTexturesAndBuffers->SetSkinningMatricesForSkeletons();
     }
 
@@ -531,7 +510,7 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
             {
                 XMMATRIX spotlightMatrix = XMMatrixInverse(NULL, pPerFrame->lights[i].mLightViewProj);
                 XMMATRIX worldMatrix = spotlightMatrix * pPerFrame->mCameraViewProj;
-                m_wireframeBox.Draw(pCmdLst1, &m_Wireframe, worldMatrix, vCenter, vRadius, vColor);
+                m_wireframeBox.Draw(pCmdLst1, &m_wireframe, worldMatrix, vCenter, vRadius, vColor);
             }
 
             m_GPUTimer.GetTimeStamp(pCmdLst1, "Light's frustum");
@@ -555,7 +534,7 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
         pCmdLst1->ResolveSubresource(m_HDR.GetResource(), 0, m_HDRMSAA.GetResource(), 0, DXGI_FORMAT_R16G16B16A16_FLOAT);
 
         D3D12_RESOURCE_BARRIER postResolve[2] = {
-            CD3DX12_RESOURCE_BARRIER::Transition(m_HDR.GetResource(), D3D12_RESOURCE_STATE_RESOLVE_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE), // the bloom needs to read from this
+            CD3DX12_RESOURCE_BARRIER::Transition(m_HDR.GetResource(), D3D12_RESOURCE_STATE_RESOLVE_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
             CD3DX12_RESOURCE_BARRIER::Transition(m_HDRMSAA.GetResource(), D3D12_RESOURCE_STATE_RESOLVE_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET)
         };
         pCmdLst1->ResourceBarrier(2, postResolve);
@@ -610,8 +589,6 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
 
         m_toneMapping.Draw(pCmdLst2, &m_HDRSRV, pState->exposure, pState->toneMapper);
         m_GPUTimer.GetTimeStamp(pCmdLst2, "Tone mapping");
-
-        pCmdLst2->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(m_HDR.GetResource(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET));
     }
 
     // Render HUD  ------------------------------------------------------------------------
@@ -625,10 +602,13 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
 
         m_GPUTimer.GetTimeStamp(pCmdLst2, "ImGUI Rendering");
     }
-    
-    // Transition swapchain into present mode
 
-    pCmdLst2->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(pSwapChain->GetCurrentBackBufferResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
+    // Transition swapchain into present mode
+    D3D12_RESOURCE_BARRIER postGUI[2] = {
+           CD3DX12_RESOURCE_BARRIER::Transition(m_HDR.GetResource(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
+           CD3DX12_RESOURCE_BARRIER::Transition(pSwapChain->GetCurrentBackBufferResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT)
+    };
+    pCmdLst2->ResourceBarrier(2, postGUI);
 
     m_GPUTimer.OnEndFrame();
 

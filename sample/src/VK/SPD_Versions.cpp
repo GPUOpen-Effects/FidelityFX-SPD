@@ -72,37 +72,26 @@ namespace CAULDRON_VK
 
     uint32_t SPD_Versions::GetMaxMipLevelCount(uint32_t Width, uint32_t Height)
     {
-        bool maxbit = false;
-        uint32_t mipLevel = 12;
-        uint32_t resolution = Width < Height ? Width : Height;
-        for (uint32_t i = 12; i >= 0; --i)
-        {
-            maxbit = (resolution >> i) & 0x1;
-            if (maxbit) {
-                mipLevel = i;
-                break;
-            }
-        }
-
-        return mipLevel;
+        int resolution = max(Width, Height);
+        return (static_cast<int>(min(1.0f + floor(log2(resolution)), 12)) - 1);
     }
 
-    void SPD_Versions::OnCreateWindowSizeDependentResources(uint32_t Width, uint32_t Height, Texture *pInput)
+    void SPD_Versions::OnCreateWindowSizeDependentResources(VkCommandBuffer cmd_buf, uint32_t Width, uint32_t Height, Texture *pInput)
     {
         if (m_pDevice->GetPhysicalDeviceSubgroupProperties().supportedOperations 
             & VK_SUBGROUP_FEATURE_QUAD_BIT)
         {
-            m_spd_WaveOps_NonPacked.OnCreateWindowSizeDependentResources(Width, Height, pInput, GetMaxMipLevelCount(Width, Height));
-            m_spd_WaveOps_Packed.OnCreateWindowSizeDependentResources(Width, Height, pInput, GetMaxMipLevelCount(Width, Height));
+            m_spd_WaveOps_NonPacked.OnCreateWindowSizeDependentResources(cmd_buf, Width, Height, pInput, GetMaxMipLevelCount(Width, Height));
+            m_spd_WaveOps_Packed.OnCreateWindowSizeDependentResources(cmd_buf, Width, Height, pInput, GetMaxMipLevelCount(Width, Height));
 
-            m_spd_WaveOps_NonPacked_Linear_Sampler.OnCreateWindowSizeDependentResources(Width, Height, pInput, GetMaxMipLevelCount(Width, Height));
-            m_spd_WaveOps_Packed_Linear_Sampler.OnCreateWindowSizeDependentResources(Width, Height, pInput, GetMaxMipLevelCount(Width, Height));
+            m_spd_WaveOps_NonPacked_Linear_Sampler.OnCreateWindowSizeDependentResources(cmd_buf, Width, Height, pInput, GetMaxMipLevelCount(Width, Height));
+            m_spd_WaveOps_Packed_Linear_Sampler.OnCreateWindowSizeDependentResources(cmd_buf, Width, Height, pInput, GetMaxMipLevelCount(Width, Height));
         }
-        m_spd_No_WaveOps_NonPacked.OnCreateWindowSizeDependentResources(Width, Height, pInput, GetMaxMipLevelCount(Width, Height));
-        m_spd_No_WaveOps_Packed.OnCreateWindowSizeDependentResources(Width, Height, pInput, GetMaxMipLevelCount(Width, Height));
+        m_spd_No_WaveOps_NonPacked.OnCreateWindowSizeDependentResources(cmd_buf, Width, Height, pInput, GetMaxMipLevelCount(Width, Height));
+        m_spd_No_WaveOps_Packed.OnCreateWindowSizeDependentResources(cmd_buf, Width, Height, pInput, GetMaxMipLevelCount(Width, Height));
 
-        m_spd_No_WaveOps_NonPacked_Linear_Sampler.OnCreateWindowSizeDependentResources(Width, Height, pInput, GetMaxMipLevelCount(Width, Height));
-        m_spd_No_WaveOps_Packed_Linear_Sampler.OnCreateWindowSizeDependentResources(Width, Height, pInput, GetMaxMipLevelCount(Width, Height));
+        m_spd_No_WaveOps_NonPacked_Linear_Sampler.OnCreateWindowSizeDependentResources(cmd_buf, Width, Height, pInput, GetMaxMipLevelCount(Width, Height));
+        m_spd_No_WaveOps_Packed_Linear_Sampler.OnCreateWindowSizeDependentResources(cmd_buf, Width, Height, pInput, GetMaxMipLevelCount(Width, Height));
     }
 
     void SPD_Versions::OnDestroyWindowSizeDependentResources()

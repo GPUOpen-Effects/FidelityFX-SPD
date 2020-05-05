@@ -200,7 +200,7 @@ void SPD_Sample::OnRender()
     // Get timings
     //
     double timeNow = MillisecondsNow();
-    m_deltaTime = timeNow - m_lastFrameTime;
+    float deltaTime = (m_timeStep == 0.0f) ? (float)(timeNow - m_lastFrameTime) : m_timeStep;
     m_lastFrameTime = timeNow;
 
     // Build UI and set the scene state. Note that the rendering of the UI happens later.
@@ -232,12 +232,6 @@ void SPD_Sample::OnRender()
         if (ImGui::CollapsingHeader("Info", ImGuiTreeNodeFlags_DefaultOpen))
         {
             ImGui::Text("Resolution       : %ix%i", m_Width, m_Height);
-        }
-
-        if (ImGui::CollapsingHeader("Animation", ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            ImGui::Checkbox("Play", &m_bPlay);
-            ImGui::SliderFloat("Time", &m_time, 0, 30);
         }
 
         if (ImGui::CollapsingHeader("Downsampler", ImGuiTreeNodeFlags_DefaultOpen))
@@ -285,7 +279,6 @@ void SPD_Sample::OnRender()
             ImGui::SliderFloat("exposure", &m_state.exposure, 0.0f, 2.0f);
             ImGui::SliderFloat("emmisive", &m_state.emmisiveFactor, 1.0f, 1000.0f, NULL,1.0f);
             ImGui::SliderFloat("iblFactor", &m_state.iblFactor, 0.0f, 2.0f);
-            ImGui::SliderFloat("spotLightIntensity 0", &m_state.spotlight[0].intensity, 0.0f, 50.0f);
         }
 
         const char * tonemappers[] = { "Timothy", "DX11DSK", "Reinhard", "Uncharted2Tonemap", "ACES", "No tonemapper" };
@@ -297,13 +290,6 @@ void SPD_Sample::OnRender()
         const char * cameraControl[] = { "WASD", "Orbit" };
         static int cameraControlSelected = 1;
         ImGui::Combo("Camera", &cameraControlSelected, cameraControl, _countof(cameraControl));
-
-        ImGui::Checkbox("Show Light Frustum", &m_state.bDrawLightFrustum);
-        if (ImGui::Button("Set spotlight"))
-        {
-            m_state.spotlight[0].light.LookAt(m_state.camera.GetPosition(), m_state.camera.GetPosition() - m_state.camera.GetDirection());
-        }
-        ImGui::Checkbox("Show Bounding Boxes", &m_state.bDrawBoundingBoxes);
 
         if (ImGui::CollapsingHeader("Profiler", ImGuiTreeNodeFlags_DefaultOpen))
         {
@@ -386,7 +372,7 @@ void SPD_Sample::OnRender()
     //
     if (m_bPlay)
     {
-        m_time += (float)m_deltaTime / 1000.0f;
+        m_time += (float)deltaTime / 1000.0f;
     }
 
     // Animate and transform the scene
@@ -417,9 +403,9 @@ int WINAPI WinMain(HINSTANCE hInstance,
     LPSTR lpCmdLine,
     int nCmdShow)
 {
-    LPCSTR Name = "SampleVK v0.1";
-    uint32_t Width = 3840;
-    uint32_t Height = 2160;
+    LPCSTR Name = "FFX SPD SampleVK v1.0";
+    uint32_t Width = 1920;
+    uint32_t Height = 1080;
 
     // create new Vulkan sample
     return RunFramework(hInstance, lpCmdLine, nCmdShow, Width, Height, new SPD_Sample(Name));

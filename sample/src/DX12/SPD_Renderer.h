@@ -22,7 +22,7 @@
 #include "SPD_Versions.h"
 #include "PSDownsampler.h"
 
-static const int backBufferCount = 2;
+static const int backBufferCount = 3;
 
 #define USE_VID_MEM true
 
@@ -142,7 +142,7 @@ private:
     RTV                             m_HDRRTV;
 
     // widgets
-    Wireframe                       m_Wireframe;
+    Wireframe                       m_wireframe;
     WireframeBox                    m_wireframeBox;
 
     std::vector<TimeStamp>          m_TimeStamps;

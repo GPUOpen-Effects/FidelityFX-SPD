@@ -24,15 +24,12 @@ Downsampler
 - SPD CS linear sampler: uses the SPD library and for sampling the source texture a linear sampler
 
 SPD Versions
-- WaveOps: uses Intrinsics and LDS to share the data between threads - this is the recommended version
 - NO-WaveOps: uses only LDS to share the data between threads
+- WaveOps: uses Intrinsics and LDS to share the data between threads
 
 SPD Non-Packed / Packed Version
 - Non-Packed: uses fp32
 - Packed: uses fp16, reduced register pressure
-
-# Known issues
-DX12, No-WaveOps, Non-Packed: Corruptions on Nvidia when using DXC compiler.
 
 # Recommendations
 We recommend to use the WapeOps path when supported. If higher precision is not needed, you can enable the packed mode - it has less register pressure and can run a bit faster as well.
