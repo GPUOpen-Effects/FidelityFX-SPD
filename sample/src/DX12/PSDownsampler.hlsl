@@ -38,7 +38,7 @@ struct VERTEX
 // Texture definitions
 //--------------------------------------------------------------------------------------
 Texture2D        inputTex         :register(t0);
-SamplerState     samLinearMirror  :register(s0);
+SamplerState     samLinear        :register(s0);
 
 //--------------------------------------------------------------------------------------
 // Main function
@@ -46,7 +46,8 @@ SamplerState     samLinearMirror  :register(s0);
 
 float4 mainPS(VERTEX Input) : SV_Target
 {
+    // as compute shader solution
     float2 texCoord = Input.vTexcoord * u_outSize;
     texCoord = texCoord * u_invSize * 2.0;
-    return inputTex.Sample(samLinearMirror, texCoord);
+    return inputTex.Sample(samLinear, texCoord);
 }

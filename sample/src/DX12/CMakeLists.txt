@@ -1,20 +1,21 @@
 project (SPDSample_DX12)
 include(${CMAKE_HOME_DIRECTORY}/common.cmake)
+
+add_compile_options(/MP)
+
 set(sources 
 	CSDownsampler.cpp
 	CSDownsampler.h
 	PSDownsampler.cpp
 	PSDownsampler.h
-	SPD_CS.cpp
-	SPD_CS.h
-        SPD_CS_Linear_Sampler.cpp
-	SPD_CS_Linear_Sampler.h
-	SPD_Versions.cpp
-	SPD_Versions.h
-	SPD_Sample.cpp
-	SPD_Sample.h
-	SPD_Renderer.cpp
-	SPD_Renderer.h
+	SPDCS.cpp
+	SPDCS.h
+	SPDVersions.cpp
+	SPDVersions.h
+	SPDSample.cpp
+	SPDSample.h
+	SPDRenderer.cpp
+	SPDRenderer.h
 	stdafx.cpp
 	stdafx.h)
 set(Shaders_src
@@ -22,14 +23,20 @@ set(Shaders_src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../ffx-spd/ffx_spd.h
     ${CMAKE_CURRENT_SOURCE_DIR}/CSDownsampler.hlsl
     ${CMAKE_CURRENT_SOURCE_DIR}/PSDownsampler.hlsl
-    ${CMAKE_CURRENT_SOURCE_DIR}/SPD_Integration.hlsl
-    ${CMAKE_CURRENT_SOURCE_DIR}/SPD_Integration_Linear_Sampler.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/SPDIntegration.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/SPDIntegrationLinearSampler.hlsl
+)
+set(Common_src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Common/SpdSample.json
 )
 
 source_group("Sources"            FILES ${sources})    
 source_group("Shaders"            FILES ${Shaders_src})
+source_group("Common"             FILES ${Common_src})
+
 # prevent VS from processing/compiling these files
 set_source_files_properties(${Shaders_src} PROPERTIES VS_TOOL_OVERRIDE "Text")
+set_source_files_properties(${Common_src} PROPERTIES VS_TOOL_OVERRIDE "Text")
 
 function(copyCommand list dest)
 	foreach(fullFileName ${list})    
@@ -49,8 +56,9 @@ endfunction()
 # copy shaders and media to Bin
 # include("${CMAKE_HOME_DIRECTORY}/src/Common/Shaders/CMakeList.txt")
 copyCommand("${Shaders_src}" ${CMAKE_HOME_DIRECTORY}/bin/ShaderLibDX)
+copyCommand("${Common_src}" ${CMAKE_HOME_DIRECTORY}/bin)
     
-add_executable(${PROJECT_NAME} WIN32 ${sources} ${Shaders_src}) 
+add_executable(${PROJECT_NAME} WIN32 ${sources} ${Shaders_src} ${Common_src}) 
 target_link_libraries (${PROJECT_NAME} LINK_PUBLIC Cauldron_DX12 ImGUI amd_ags DXC d3dcompiler D3D12)
 target_include_directories (${PROJECT_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ffx-spd)
 set_target_properties(${PROJECT_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_HOME_DIRECTORY}/bin")

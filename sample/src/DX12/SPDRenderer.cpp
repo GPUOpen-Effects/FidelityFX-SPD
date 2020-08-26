@@ -19,19 +19,16 @@
 
 #include "stdafx.h"
 
-#include "SPD_Renderer.h"
+#include "SPDRenderer.h"
 
 //--------------------------------------------------------------------------------------
 //
 // OnCreate
 //
 //--------------------------------------------------------------------------------------
-void SPD_Renderer::OnCreate(Device* pDevice, SwapChain *pSwapChain)
+void SPDRenderer::OnCreate(Device *pDevice, SwapChain *pSwapChain)
 {
     m_pDevice = pDevice;
-
-    m_format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-
     // Initialize helpers
 
     // Create all the heaps for the resources views
@@ -45,15 +42,15 @@ void SPD_Renderer::OnCreate(Device* pDevice, SwapChain *pSwapChain)
 
     // Create a commandlist ring for the Direct queue
     uint32_t commandListsPerBackBuffer = 8;
-    m_CommandListRing.OnCreate(pDevice, backBufferCount, commandListsPerBackBuffer, pDevice->GetGraphicsQueue()->GetDesc());
+    m_commandListRing.OnCreate(pDevice, backBufferCount, commandListsPerBackBuffer, pDevice->GetGraphicsQueue()->GetDesc());
 
     // Create a 'dynamic' constant buffer
     const uint32_t constantBuffersMemSize = 20 * 1024 * 1024;    
-    m_ConstantBufferRing.OnCreate(pDevice, backBufferCount, constantBuffersMemSize, &m_resourceViewHeaps);
+    m_constantBufferRing.OnCreate(pDevice, backBufferCount, constantBuffersMemSize, &m_resourceViewHeaps);
 
     // Create a 'static' pool for vertices, indices and constant buffers
     const uint32_t staticGeometryMemSize = 128 * 1024 * 1024;
-    m_VidMemBufferPool.OnCreate(pDevice, staticGeometryMemSize, USE_VID_MEM, "StaticGeom");
+    m_vidMemBufferPool.OnCreate(pDevice, staticGeometryMemSize, USE_VID_MEM, "StaticGeom");
 
     // initialize the GPU time stamps module
     m_GPUTimer.OnCreate(pDevice, backBufferCount);
@@ -61,7 +58,7 @@ void SPD_Renderer::OnCreate(Device* pDevice, SwapChain *pSwapChain)
     // Quick helper to upload resources, it has it's own commandList and uses suballocation.
     // for 4K textures we'll need 100Megs
     const uint32_t uploadHeapMemSize = 1000 * 1024 * 1024;
-    m_UploadHeap.OnCreate(pDevice, uploadHeapMemSize);    // initialize an upload heap (uses suballocation for faster results)
+    m_uploadHeap.OnCreate(pDevice, uploadHeapMemSize);    // initialize an upload heap (uses suballocation for faster results)
 
     // Create the depth buffer view
     m_resourceViewHeaps.AllocDSVDescriptor(1, &m_depthBufferDSV);
@@ -73,20 +70,20 @@ void SPD_Renderer::OnCreate(Device* pDevice, SwapChain *pSwapChain)
     m_shadowMap.CreateDSV(0, &m_ShadowMapDSV);
     m_shadowMap.CreateSRV(0, &m_ShadowMapSRV);
 
-    m_skyDome.OnCreate(pDevice, &m_UploadHeap, &m_resourceViewHeaps, &m_ConstantBufferRing, &m_VidMemBufferPool, "..\\media\\envmaps\\papermill\\diffuse.dds", "..\\media\\envmaps\\papermill\\specular.dds", DXGI_FORMAT_R16G16B16A16_FLOAT, 4);
-    m_skyDomeProc.OnCreate(pDevice, &m_resourceViewHeaps, &m_ConstantBufferRing, &m_VidMemBufferPool, m_format, 4);
-    m_wireframe.OnCreate(pDevice, &m_resourceViewHeaps, &m_ConstantBufferRing, &m_VidMemBufferPool, DXGI_FORMAT_R16G16B16A16_FLOAT, 4);
-    m_wireframeBox.OnCreate(pDevice, &m_resourceViewHeaps, &m_ConstantBufferRing, &m_VidMemBufferPool);
+    m_skyDome.OnCreate(pDevice, &m_uploadHeap, &m_resourceViewHeaps, &m_constantBufferRing, &m_vidMemBufferPool, "..\\media\\envmaps\\papermill\\diffuse.dds", "..\\media\\envmaps\\papermill\\specular.dds", DXGI_FORMAT_R16G16B16A16_FLOAT, 4);
+    m_skyDomeProc.OnCreate(pDevice, &m_resourceViewHeaps, &m_constantBufferRing, &m_vidMemBufferPool, DXGI_FORMAT_R16G16B16A16_FLOAT, 4);
+    m_wireframe.OnCreate(pDevice, &m_resourceViewHeaps, &m_constantBufferRing, &m_vidMemBufferPool, DXGI_FORMAT_R16G16B16A16_FLOAT, 4);
+    m_wireframeBox.OnCreate(pDevice, &m_resourceViewHeaps, &m_constantBufferRing, &m_vidMemBufferPool);
 
-    m_PSDownsampler.OnCreate(pDevice, &m_resourceViewHeaps, &m_ConstantBufferRing, &m_VidMemBufferPool, m_format);
-    m_CSDownsampler.OnCreate(pDevice, &m_resourceViewHeaps, &m_ConstantBufferRing, m_format);
-    m_SPD_Versions.OnCreate(pDevice, &m_resourceViewHeaps, &m_ConstantBufferRing, m_format);
+    m_PSDownsampler.OnCreate(pDevice, &m_uploadHeap, &m_resourceViewHeaps, &m_constantBufferRing, &m_vidMemBufferPool);
+    m_CSDownsampler.OnCreate(pDevice, &m_uploadHeap, &m_resourceViewHeaps, &m_constantBufferRing);
+    m_SPDVersions.OnCreate(pDevice, &m_uploadHeap, &m_resourceViewHeaps, &m_constantBufferRing);
 
     // Create tonemapping pass
-    m_toneMapping.OnCreate(pDevice, &m_resourceViewHeaps, &m_ConstantBufferRing, &m_VidMemBufferPool, pSwapChain->GetFormat());
+    m_toneMapping.OnCreate(pDevice, &m_resourceViewHeaps, &m_constantBufferRing, &m_vidMemBufferPool, pSwapChain->GetFormat());
 
     // Initialize UI rendering resources
-    m_ImGUI.OnCreate(pDevice, &m_UploadHeap, &m_resourceViewHeaps, &m_ConstantBufferRing, pSwapChain->GetFormat());
+    m_imGUI.OnCreate(pDevice, &m_uploadHeap, &m_resourceViewHeaps, &m_constantBufferRing, pSwapChain->GetFormat());
 
     m_resourceViewHeaps.AllocRTVDescriptor(1, &m_HDRRTV);
     m_resourceViewHeaps.AllocRTVDescriptor(1, &m_HDRRTVMSAA);
@@ -95,8 +92,8 @@ void SPD_Renderer::OnCreate(Device* pDevice, SwapChain *pSwapChain)
 
     // Make sure upload heap has finished uploading before continuing
 #if (USE_VID_MEM==true)
-    m_VidMemBufferPool.UploadData(m_UploadHeap.GetCommandList());
-    m_UploadHeap.FlushAndFinish();
+    m_vidMemBufferPool.UploadData(m_uploadHeap.GetCommandList());
+    m_uploadHeap.FlushAndFinish();
 #endif
 }
 
@@ -105,14 +102,14 @@ void SPD_Renderer::OnCreate(Device* pDevice, SwapChain *pSwapChain)
 // OnDestroy 
 //
 //--------------------------------------------------------------------------------------
-void SPD_Renderer::OnDestroy()
+void SPDRenderer::OnDestroy()
 {
     m_toneMapping.OnDestroy();
-    m_ImGUI.OnDestroy();
+    m_imGUI.OnDestroy();
 
     m_PSDownsampler.OnDestroy();
     m_CSDownsampler.OnDestroy();
-    m_SPD_Versions.OnDestroy();
+    m_SPDVersions.OnDestroy();
 
     m_wireframeBox.OnDestroy();
     m_wireframe.OnDestroy();
@@ -120,12 +117,12 @@ void SPD_Renderer::OnDestroy()
     m_skyDome.OnDestroy();
     m_shadowMap.OnDestroy();
 
-    m_UploadHeap.OnDestroy();
+    m_uploadHeap.OnDestroy();
     m_GPUTimer.OnDestroy();
-    m_VidMemBufferPool.OnDestroy();
-    m_ConstantBufferRing.OnDestroy();
+    m_vidMemBufferPool.OnDestroy();
+    m_constantBufferRing.OnDestroy();
     m_resourceViewHeaps.OnDestroy();
-    m_CommandListRing.OnDestroy();
+    m_commandListRing.OnDestroy();
 }
 
 //--------------------------------------------------------------------------------------
@@ -133,10 +130,10 @@ void SPD_Renderer::OnDestroy()
 // OnCreateWindowSizeDependentResources
 //
 //--------------------------------------------------------------------------------------
-void SPD_Renderer::OnCreateWindowSizeDependentResources(SwapChain *pSwapChain, uint32_t Width, uint32_t Height)
+void SPDRenderer::OnCreateWindowSizeDependentResources(SwapChain *pSwapChain, uint32_t Width, uint32_t Height)
 {
-    m_Width = Width;
-    m_Height = Height;
+    m_width = Width;
+    m_height = Height;
 
     // Set the viewport
     //
@@ -144,7 +141,7 @@ void SPD_Renderer::OnCreateWindowSizeDependentResources(SwapChain *pSwapChain, u
 
     // Create scissor rectangle
     //
-    m_RectScissor = { 0, 0, (LONG)Width, (LONG)Height };
+    m_rectScissor = { 0, 0, (LONG)Width, (LONG)Height };
 
     // Create depth buffer    
     //
@@ -163,17 +160,6 @@ void SPD_Renderer::OnCreateWindowSizeDependentResources(SwapChain *pSwapChain, u
     m_HDR.InitRenderTarget(m_pDevice, "HDR", &RDesc, D3D12_RESOURCE_STATE_RENDER_TARGET);
     m_HDR.CreateSRV(0, &m_HDRSRV);
     m_HDR.CreateRTV(0, &m_HDRRTV);   
-
-    // update downscaling effect
-    //
-    {
-        int resolution = max(m_Width, m_Height);
-        int mipLevel = (static_cast<int>(min(1.0f + floor(log2(resolution)), 12)) - 1);
-
-        m_PSDownsampler.OnCreateWindowSizeDependentResources(m_Width, m_Height, &m_HDR, mipLevel);
-        m_CSDownsampler.OnCreateWindowSizeDependentResources(m_Width, m_Height, &m_HDR, mipLevel);
-        m_SPD_Versions.OnCreateWindowSizeDependentResources(m_Width, m_Height, &m_HDR);
-    }
 }
 
 //--------------------------------------------------------------------------------------
@@ -181,12 +167,8 @@ void SPD_Renderer::OnCreateWindowSizeDependentResources(SwapChain *pSwapChain, u
 // OnDestroyWindowSizeDependentResources
 //
 //--------------------------------------------------------------------------------------
-void SPD_Renderer::OnDestroyWindowSizeDependentResources()
+void SPDRenderer::OnDestroyWindowSizeDependentResources()
 {
-    m_PSDownsampler.OnDestroyWindowSizeDependentResources();
-    m_CSDownsampler.OnDestroyWindowSizeDependentResources();
-    m_SPD_Versions.OnDestroyWindowSizeDependentResources();
-
     m_HDR.OnDestroy();
     m_HDRMSAA.OnDestroy();
     m_depthBuffer.OnDestroy();
@@ -198,7 +180,7 @@ void SPD_Renderer::OnDestroyWindowSizeDependentResources()
 // LoadScene
 //
 //--------------------------------------------------------------------------------------
-int SPD_Renderer::LoadScene(GLTFCommon *pGLTFCommon, int stage)
+int SPDRenderer::LoadScene(GLTFCommon *pGLTFCommon, int stage)
 {
     // show loading progress
     //
@@ -220,7 +202,7 @@ int SPD_Renderer::LoadScene(GLTFCommon *pGLTFCommon, int stage)
         Profile p("m_pGltfLoader->Load");
 
         m_pGLTFTexturesAndBuffers = new GLTFTexturesAndBuffers();
-        m_pGLTFTexturesAndBuffers->OnCreate(m_pDevice, pGLTFCommon, &m_UploadHeap, &m_VidMemBufferPool, &m_ConstantBufferRing);
+        m_pGLTFTexturesAndBuffers->OnCreate(m_pDevice, pGLTFCommon, &m_uploadHeap, &m_vidMemBufferPool, &m_constantBufferRing);
     }
     else if (stage == 6)
     {
@@ -235,13 +217,13 @@ int SPD_Renderer::LoadScene(GLTFCommon *pGLTFCommon, int stage)
         Profile p("m_gltfDepth->OnCreate");
 
         //create the glTF's textures, VBs, IBs, shaders and descriptors for this particular pass
-        m_gltfDepth = new GltfDepthPass();
-        m_gltfDepth->OnCreate(
+        m_pGltfDepth = new GltfDepthPass();
+        m_pGltfDepth->OnCreate(
             m_pDevice,
-            &m_UploadHeap,
+            &m_uploadHeap,
             &m_resourceViewHeaps,
-            &m_ConstantBufferRing,
-            &m_VidMemBufferPool,
+            &m_constantBufferRing,
+            &m_vidMemBufferPool,
             m_pGLTFTexturesAndBuffers
         );
     }
@@ -250,17 +232,19 @@ int SPD_Renderer::LoadScene(GLTFCommon *pGLTFCommon, int stage)
         Profile p("m_gltfPBR->OnCreate");
         
         // same thing as above but for the PBR pass
-        m_gltfPBR = new GltfPbrPass();
-        m_gltfPBR->OnCreate(
+        m_pGltfPBR = new GltfPbrPass();
+        m_pGltfPBR->OnCreate(
             m_pDevice,
-            &m_UploadHeap,
+            &m_uploadHeap,
             &m_resourceViewHeaps,
-            &m_ConstantBufferRing,
-            &m_VidMemBufferPool,
+            &m_constantBufferRing,
+            &m_vidMemBufferPool,
             m_pGLTFTexturesAndBuffers,
             &m_skyDome,
             false,
+            false,
             m_HDRMSAA.GetFormat(),
+            DXGI_FORMAT_UNKNOWN,
             DXGI_FORMAT_UNKNOWN,
             DXGI_FORMAT_UNKNOWN,
             4
@@ -271,30 +255,30 @@ int SPD_Renderer::LoadScene(GLTFCommon *pGLTFCommon, int stage)
         Profile p("m_gltfBBox->OnCreate");
 
         // just a bounding box pass that will draw boundingboxes instead of the geometry itself
-        m_gltfBBox = new GltfBBoxPass();
-        m_gltfBBox->OnCreate(
+        m_pGltfBBox = new GltfBBoxPass();
+        m_pGltfBBox->OnCreate(
             m_pDevice,
-            &m_UploadHeap,
+            &m_uploadHeap,
             &m_resourceViewHeaps,
-            &m_ConstantBufferRing,
-            &m_VidMemBufferPool,
+            &m_constantBufferRing,
+            &m_vidMemBufferPool,
             m_pGLTFTexturesAndBuffers,
             &m_wireframe
         );
 #if (USE_VID_MEM==true)
         // we are borrowing the upload heap command list for uploading to the GPU the IBs and VBs
-        m_VidMemBufferPool.UploadData(m_UploadHeap.GetCommandList());
+        m_vidMemBufferPool.UploadData(m_uploadHeap.GetCommandList());
 #endif    
     }
     else if (stage == 10)
     {
         Profile p("Flush");
 
-        m_UploadHeap.FlushAndFinish();
+        m_uploadHeap.FlushAndFinish();
 
 #if (USE_VID_MEM==true)
         //once everything is uploaded we dont need he upload heaps anymore
-        m_VidMemBufferPool.FreeUploadHeap();
+        m_vidMemBufferPool.FreeUploadHeap();
 #endif    
         // tell caller that we are done loading the map
         return -1;
@@ -309,27 +293,27 @@ int SPD_Renderer::LoadScene(GLTFCommon *pGLTFCommon, int stage)
 // UnloadScene
 //
 //--------------------------------------------------------------------------------------
-void SPD_Renderer::UnloadScene()
+void SPDRenderer::UnloadScene()
 {
-    if (m_gltfPBR)
+    if (m_pGltfPBR)
     {
-        m_gltfPBR->OnDestroy();
-        delete m_gltfPBR;
-        m_gltfPBR = NULL;
+        m_pGltfPBR->OnDestroy();
+        delete m_pGltfPBR;
+        m_pGltfPBR = NULL;
     }
 
-    if (m_gltfDepth)
+    if (m_pGltfDepth)
     {
-        m_gltfDepth->OnDestroy();
-        delete m_gltfDepth;
-        m_gltfDepth = NULL;
+        m_pGltfDepth->OnDestroy();
+        delete m_pGltfDepth;
+        m_pGltfDepth = NULL;
     }
 
-    if (m_gltfBBox)
+    if (m_pGltfBBox)
     {
-        m_gltfBBox->OnDestroy();
-        delete m_gltfBBox;
-        m_gltfBBox = NULL;
+        m_pGltfBBox->OnDestroy();
+        delete m_pGltfBBox;
+        m_pGltfBBox = NULL;
     }
 
     if (m_pGLTFTexturesAndBuffers)
@@ -346,7 +330,7 @@ void SPD_Renderer::UnloadScene()
 // OnRender
 //
 //--------------------------------------------------------------------------------------
-void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
+void SPDRenderer::OnRender(State *pState, SwapChain *pSwapChain)
 {
     // Timing values
     //
@@ -355,8 +339,8 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
     
     // Let our resource managers do some house keeping 
     //
-    m_ConstantBufferRing.OnBeginFrame();
-    m_GPUTimer.OnBeginFrame(gpuTicksPerSecond, &m_TimeStamps);
+    m_constantBufferRing.OnBeginFrame();
+    m_GPUTimer.OnBeginFrame(gpuTicksPerSecond, &m_timeStamps);
     
     // Sets the perFrame data (Camera and lights data), override as necessary and set them as constant buffers --------------
     //
@@ -395,7 +379,7 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
 
     // command buffer calls
     //    
-    ID3D12GraphicsCommandList2* pCmdLst1 = m_CommandListRing.GetNewCommandList();
+    ID3D12GraphicsCommandList2* pCmdLst1 = m_commandListRing.GetNewCommandList();
 
     m_GPUTimer.GetTimeStamp(pCmdLst1, "Begin Frame");
 
@@ -417,7 +401,7 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
 
     // Render to shadow map atlas for spot lights ------------------------------------------
     //
-    if (m_gltfDepth && pPerFrame != NULL)
+    if (m_pGltfDepth && pPerFrame != NULL)
     {        
         uint32_t shadowMapIndex = 0;
         for (uint32_t i = 0; i < pPerFrame->lightCount; i++)
@@ -433,10 +417,10 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
             SetViewportAndScissor(pCmdLst1, viewportOffsetsX[i] * viewportWidth, viewportOffsetsY[i] * viewportHeight, viewportWidth, viewportHeight);
             pCmdLst1->OMSetRenderTargets(0, NULL, true, &m_ShadowMapDSV.GetCPU());
 
-            GltfDepthPass::per_frame *cbDepthPerFrame = m_gltfDepth->SetPerFrameConstants();
+            GltfDepthPass::per_frame *cbDepthPerFrame = m_pGltfDepth->SetPerFrameConstants();
             cbDepthPerFrame->mViewProj = pPerFrame->lights[i].mLightViewProj;
 
-            m_gltfDepth->Draw(pCmdLst1);
+            m_pGltfDepth->Draw(pCmdLst1);
             
             m_GPUTimer.GetTimeStamp(pCmdLst1, "Shadow map");
             shadowMapIndex++;
@@ -448,7 +432,7 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
     pCmdLst1->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(m_shadowMap.GetResource(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
 
     pCmdLst1->RSSetViewports(1, &m_viewPort);
-    pCmdLst1->RSSetScissorRects(1, &m_RectScissor);
+    pCmdLst1->RSSetScissorRects(1, &m_rectScissor);
     pCmdLst1->OMSetRenderTargets(1, &m_HDRRTVMSAA.GetCPU(), true, &m_depthBufferDSV.GetCPU());
 
     if (pPerFrame != NULL)
@@ -479,19 +463,19 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
 
         // Render scene to color buffer
         //    
-        if (m_gltfPBR && pPerFrame != NULL)
+        if (m_pGltfPBR && pPerFrame != NULL)
         {
             //set per frame constant buffer values
-            m_gltfPBR->Draw(pCmdLst1, &m_ShadowMapSRV);
+            m_pGltfPBR->Draw(pCmdLst1, &m_ShadowMapSRV);
         }
 
         // draw object's bounding boxes
         //
-        if (m_gltfBBox && pPerFrame != NULL)
+        if (m_pGltfBBox && pPerFrame != NULL)
         {
             if (pState->bDrawBoundingBoxes)
             {
-                m_gltfBBox->Draw(pCmdLst1, pPerFrame->mCameraViewProj);
+                m_pGltfBBox->Draw(pCmdLst1, pPerFrame->mCameraViewProj);
 
                 m_GPUTimer.GetTimeStamp(pCmdLst1, "Bounding Box");
             }
@@ -549,19 +533,15 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
         {
         case Downsampler::PS:
             m_PSDownsampler.Draw(pCmdLst1);
-            m_PSDownsampler.Gui();
+            m_PSDownsampler.GUI(&pState->downsamplerImGUISlice);
             break;
-        case Downsampler::Multipass_CS:
+        case Downsampler::MultipassCS:
             m_CSDownsampler.Draw(pCmdLst1);
-            m_CSDownsampler.Gui();
+            m_CSDownsampler.GUI(&pState->downsamplerImGUISlice);
             break;
-        case Downsampler::SPD_CS:
-            m_SPD_Versions.Dispatch(pCmdLst1, pState->spdVersion, pState->spdPacked);
-            m_SPD_Versions.Gui(pState->spdVersion, pState->spdPacked);
-            break;
-        case Downsampler::SPD_CS_Linear_Sampler:
-            m_SPD_Versions.DispatchLinearSamplerVersion(pCmdLst1, pState->spdVersion, pState->spdPacked);
-            m_SPD_Versions.GuiLinearSamplerVersion(pState->spdVersion, pState->spdPacked);
+        case Downsampler::SPDCS:
+            m_SPDVersions.Dispatch(pCmdLst1, pState->spdLoad, pState->spdWaveOps, pState->spdPacked);
+            m_SPDVersions.GUI(pState->spdLoad, pState->spdWaveOps, pState->spdPacked, &pState->downsamplerImGUISlice);
             break;
         }
 
@@ -576,15 +556,15 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
     //
     pSwapChain->WaitForSwapChain();
     m_pDevice->GPUFlush();
-    m_CommandListRing.OnBeginFrame();
+    m_commandListRing.OnBeginFrame();
 
-    ID3D12GraphicsCommandList* pCmdLst2 = m_CommandListRing.GetNewCommandList();
+    ID3D12GraphicsCommandList* pCmdLst2 = m_commandListRing.GetNewCommandList();
 
     // Tonemapping ------------------------------------------------------------------------
     //
     {
         pCmdLst2->RSSetViewports(1, &m_viewPort);
-        pCmdLst2->RSSetScissorRects(1, &m_RectScissor);
+        pCmdLst2->RSSetScissorRects(1, &m_rectScissor);
         pCmdLst2->OMSetRenderTargets(1, pSwapChain->GetCurrentBackBufferRTV(), true, NULL);
 
         m_toneMapping.Draw(pCmdLst2, &m_HDRSRV, pState->exposure, pState->toneMapper);
@@ -595,10 +575,10 @@ void SPD_Renderer::OnRender(State *pState, SwapChain *pSwapChain)
     //
     {
         pCmdLst2->RSSetViewports(1, &m_viewPort);
-        pCmdLst2->RSSetScissorRects(1, &m_RectScissor);
+        pCmdLst2->RSSetScissorRects(1, &m_rectScissor);
         pCmdLst2->OMSetRenderTargets(1, pSwapChain->GetCurrentBackBufferRTV(), true, NULL);
 
-        m_ImGUI.Draw(pCmdLst2);
+        m_imGUI.Draw(pCmdLst2);
 
         m_GPUTimer.GetTimeStamp(pCmdLst2, "ImGUI Rendering");
     }

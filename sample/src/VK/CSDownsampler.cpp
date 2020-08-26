@@ -28,14 +28,13 @@
 namespace CAULDRON_VK
 {
     void CSDownsampler::OnCreate(
-        Device* pDevice,
-        ResourceViewHeaps* pResourceViewHeaps,
-        VkFormat outFormat
+        Device *pDevice,
+        UploadHeap *pUploadHeap,
+        ResourceViewHeaps *pResourceViewHeaps
     )
     {
         m_pDevice = pDevice;
         m_pResourceViewHeaps = pResourceViewHeaps;
-        m_outFormat = outFormat;
 
         // create the descriptor set layout
         // the shader needs
@@ -91,12 +90,14 @@ namespace CAULDRON_VK
             assert(res == VK_SUCCESS);
         }
 
-        // Do this stuff by yourself due to special requirements: push constants
+        m_cubeTexture.InitFromFile(pDevice, pUploadHeap , "..\\media\\envmaps\\papermill\\specular.dds", true, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT);
+        pUploadHeap->FlushAndFinish();
+
         VkPipelineShaderStageCreateInfo computeShader;
         DefineList defines;
 
         VkResult res = VKCompileFromFile(m_pDevice->GetDevice(), VK_SHADER_STAGE_COMPUTE_BIT,
-            "CSDownsampler.glsl", "main", &defines, &computeShader);
+            "CSDownsampler.glsl", "main", "", &defines, &computeShader);
         assert(res == VK_SUCCESS);
 
         // Create pipeline layout
@@ -108,7 +109,7 @@ namespace CAULDRON_VK
         // push constants: input size, inverse output size
         VkPushConstantRange pushConstantRange = {};
         pushConstantRange.offset = 0;
-        pushConstantRange.size = sizeof(PushConstantsCSSimple);
+        pushConstantRange.size = sizeof(cbDownsample);
         pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
         pPipelineLayoutCreateInfo.pushConstantRangeCount = 1;
         pPipelineLayoutCreateInfo.pPushConstantRanges = &pushConstantRange;
@@ -139,78 +140,12 @@ namespace CAULDRON_VK
         {
             m_pResourceViewHeaps->AllocDescriptor(m_descriptorSetLayout, &m_mip[i].m_descriptorSet);
         }
-    }
 
-    void CSDownsampler::OnCreateWindowSizeDependentResources(
-        VkCommandBuffer cmd_buf,
-        uint32_t Width,
-        uint32_t Height,
-        Texture* pInput,
-        int mips
-    )
-    {
-        m_Width = Width;
-        m_Height = Height;
-        m_mipCount = mips;
-
-        VkImageCreateInfo image_info = {};
-        image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        image_info.pNext = NULL;
-        image_info.imageType = VK_IMAGE_TYPE_2D;
-        image_info.format = m_outFormat;
-        image_info.extent.width = m_Width >> 1;
-        image_info.extent.height = m_Height >> 1;
-        image_info.extent.depth = 1;
-        image_info.mipLevels = mips;
-        image_info.arrayLayers = 1;
-        image_info.samples = VK_SAMPLE_COUNT_1_BIT;
-        image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        image_info.queueFamilyIndexCount = 0;
-        image_info.pQueueFamilyIndices = NULL;
-        image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        image_info.usage = (VkImageUsageFlags)(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT);
-        image_info.flags = 0;
-        image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-        m_result.Init(m_pDevice, &image_info, "DownsampleMipCS");
-
-        // transition layout undefined to general layout?
-        VkImageMemoryBarrier imageMemoryBarrier = {};
-        imageMemoryBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        imageMemoryBarrier.pNext = NULL;
-        imageMemoryBarrier.srcAccessMask = 0;
-        imageMemoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        imageMemoryBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        imageMemoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-        imageMemoryBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        imageMemoryBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        imageMemoryBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        imageMemoryBarrier.subresourceRange.baseMipLevel = 0;
-        imageMemoryBarrier.subresourceRange.levelCount = m_mipCount;
-        imageMemoryBarrier.subresourceRange.baseArrayLayer = 0;
-        imageMemoryBarrier.subresourceRange.layerCount = 1;
-        imageMemoryBarrier.image = m_result.Resource();
-
-        // transition general layout if detination image to shader read only for source image
-        vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            0, 0, nullptr, 0, nullptr, 1, &imageMemoryBarrier);
-
-        // Create views for the mip chain
-        //
-        for (int i = 0; i < m_mipCount; i++)
+        // populate descriptor sets
+        for (uint32_t i = 0; i < m_cubeTexture.GetMipCount() - 1; i++)
         {
-            // source -----------
-            //
-            if (i == 0)
-            {
-                pInput->CreateSRV(&m_mip[i].m_SRV, 0);
-            }
-            else
-            {
-                m_result.CreateSRV(&m_mip[i].m_SRV, i - 1);
-            }
-
-            // destination -----------
-            m_result.CreateRTV(&m_mip[i].m_RTV, i);
+            m_cubeTexture.CreateSRV(&m_mip[i].m_SRV, i); // texture2DArray
+            m_cubeTexture.CreateRTV(&m_mip[i].m_UAV, i + 1); // texture2DArray
 
             // Create and initialize the Descriptor Sets (all of them use the same Descriptor Layout)        
             // Create and initialize descriptor set for sampled image
@@ -247,7 +182,7 @@ namespace CAULDRON_VK
             // Create and initialize descriptor set for storage image
             VkDescriptorImageInfo desc_storage_image = {};
             desc_storage_image.sampler = VK_NULL_HANDLE;
-            desc_storage_image.imageView = m_mip[i].m_RTV;
+            desc_storage_image.imageView = m_mip[i].m_UAV;
             desc_storage_image.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
             writes[2] = {};
@@ -262,30 +197,67 @@ namespace CAULDRON_VK
 
             vkUpdateDescriptorSets(m_pDevice->GetDevice(), (uint32_t)writes.size(), writes.data(), 0, NULL);
         }
-    }
 
-    void CSDownsampler::OnDestroyWindowSizeDependentResources()
-    {
-        for (int i = 0; i < m_mipCount; i++)
+        for (uint32_t slice = 0; slice < m_cubeTexture.GetArraySize(); slice++)
         {
-            vkDestroyImageView(m_pDevice->GetDevice(), m_mip[i].m_SRV, NULL);
-            vkDestroyImageView(m_pDevice->GetDevice(), m_mip[i].m_RTV, NULL);
-        }
+            for (uint32_t mip = 0; mip < m_cubeTexture.GetMipCount(); mip++)
+            {
+                VkImageViewUsageCreateInfo imageViewUsageInfo = {};
+                imageViewUsageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO;
+                imageViewUsageInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
 
-        m_result.OnDestroy();
+                VkImageViewCreateInfo info = {};
+                info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+                info.pNext = &imageViewUsageInfo;
+                info.image = m_cubeTexture.Resource();
+                info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+                info.subresourceRange.baseArrayLayer = slice;
+                info.subresourceRange.layerCount = 1;
+
+                switch (m_cubeTexture.GetFormat())
+                {
+                    case VK_FORMAT_B8G8R8A8_UNORM: info.format = VK_FORMAT_B8G8R8A8_SRGB; break;
+                    case VK_FORMAT_R8G8B8A8_UNORM: info.format = VK_FORMAT_R8G8B8A8_SRGB; break;
+                    case VK_FORMAT_BC1_RGB_UNORM_BLOCK: info.format = VK_FORMAT_BC1_RGB_SRGB_BLOCK; break;
+                    case VK_FORMAT_BC2_UNORM_BLOCK: info.format = VK_FORMAT_BC2_SRGB_BLOCK; break;
+                    case VK_FORMAT_BC3_UNORM_BLOCK: info.format = VK_FORMAT_BC3_SRGB_BLOCK; break;
+                    default: info.format = m_cubeTexture.GetFormat();
+                }
+
+                info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                info.subresourceRange.baseMipLevel = mip;
+                info.subresourceRange.levelCount = 1;
+
+                VkResult res = vkCreateImageView(m_pDevice->GetDevice(), &info, NULL,
+                    &m_imGUISRV[slice * m_cubeTexture.GetMipCount() + mip]);
+                assert(res == VK_SUCCESS);
+            }
+        }
     }
 
     void CSDownsampler::OnDestroy()
     {
+        for (uint32_t i = 0; i < m_cubeTexture.GetMipCount() * 6; i++)
+        {
+            vkDestroyImageView(m_pDevice->GetDevice(), m_imGUISRV[i], NULL);
+        }
+
+        for (uint32_t i = 0; i < m_cubeTexture.GetMipCount() - 1; i++)
+        {
+            vkDestroyImageView(m_pDevice->GetDevice(), m_mip[i].m_SRV, NULL);
+            vkDestroyImageView(m_pDevice->GetDevice(), m_mip[i].m_UAV, NULL);
+        }
+
         for (int i = 0; i < CS_MAX_MIP_LEVELS; i++)
         {
             m_pResourceViewHeaps->FreeDescriptor(m_mip[i].m_descriptorSet);
         }
 
-        vkDestroyPipeline(m_pDevice->GetDevice(), m_pipeline, nullptr);
-        vkDestroyPipelineLayout(m_pDevice->GetDevice(), m_pipelineLayout, nullptr);
+        vkDestroyPipeline(m_pDevice->GetDevice(), m_pipeline, NULL);
+        vkDestroyPipelineLayout(m_pDevice->GetDevice(), m_pipelineLayout, NULL);
         vkDestroyDescriptorSetLayout(m_pDevice->GetDevice(), m_descriptorSetLayout, NULL);
         vkDestroySampler(m_pDevice->GetDevice(), m_sampler, nullptr);
+        m_cubeTexture.OnDestroy();
     }
 
     void CSDownsampler::Draw(VkCommandBuffer cmd_buf)
@@ -295,20 +267,21 @@ namespace CAULDRON_VK
 
         // transition layout undefined to general layout?
         VkImageMemoryBarrier imageMemoryBarrier = {};
+        imageMemoryBarrier = {};
         imageMemoryBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         imageMemoryBarrier.pNext = NULL;
         imageMemoryBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        imageMemoryBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        imageMemoryBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-        imageMemoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        imageMemoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        imageMemoryBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        imageMemoryBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         imageMemoryBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         imageMemoryBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         imageMemoryBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         imageMemoryBarrier.subresourceRange.baseMipLevel = 0;
-        imageMemoryBarrier.subresourceRange.levelCount = m_mipCount;
+        imageMemoryBarrier.subresourceRange.levelCount = 1;
         imageMemoryBarrier.subresourceRange.baseArrayLayer = 0;
-        imageMemoryBarrier.subresourceRange.layerCount = 1;
-        imageMemoryBarrier.image = m_result.Resource();
+        imageMemoryBarrier.subresourceRange.layerCount = 6;
+        imageMemoryBarrier.image = m_cubeTexture.Resource();
 
         // transition general layout if detination image to shader read only for source image
         vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -320,60 +293,99 @@ namespace CAULDRON_VK
         //
         vkCmdBindPipeline(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline);
 
-        for (int i = 0; i < m_mipCount; i++)
+        for (uint32_t slice = 0; slice < m_cubeTexture.GetArraySize(); slice++)
         {
-            uint32_t dispatchX = ((m_Width >> (i + 1)) + 7) / 8;
-            uint32_t dispatchY = ((m_Height >> (i + 1)) + 7) / 8;
-            uint32_t dispatchZ = 1;
-
-            vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, 1, &m_mip[i].m_descriptorSet, 0, nullptr);
-
-            // Bind push constants
-            //
-            PushConstantsCSSimple data;
-            data.outputSize[0] = (float)(m_Width >> (i + 1));
-            data.outputSize[1] = (float)(m_Height >> (i + 1));
-            data.invInputSize[0] = 1.0f / (float)(m_Width >> i);
-            data.invInputSize[1] = 1.0f / (float)(m_Height >> i);
-            vkCmdPushConstants(cmd_buf, m_pipelineLayout,
-                VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PushConstantsCSSimple), (void*)&data);
-
-            // Draw
-            //
-            vkCmdDispatch(cmd_buf, dispatchX, dispatchY, dispatchZ);
-
-            VkImageMemoryBarrier imageMemoryBarrier = {};
-            imageMemoryBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            imageMemoryBarrier.pNext = NULL;
-            imageMemoryBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-            imageMemoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            imageMemoryBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-            imageMemoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-            imageMemoryBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            imageMemoryBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            imageMemoryBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            imageMemoryBarrier.subresourceRange.baseMipLevel = i;
-            imageMemoryBarrier.subresourceRange.levelCount = 1;
-            imageMemoryBarrier.subresourceRange.baseArrayLayer = 0;
-            imageMemoryBarrier.subresourceRange.layerCount = 1;
-            imageMemoryBarrier.image = m_result.Resource();
+            VkImageMemoryBarrier imageMemoryBarrierArray = {};
+            imageMemoryBarrierArray.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            imageMemoryBarrierArray.pNext = NULL;
+            imageMemoryBarrierArray.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            imageMemoryBarrierArray.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            imageMemoryBarrierArray.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            imageMemoryBarrierArray.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            imageMemoryBarrierArray.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            imageMemoryBarrierArray.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            imageMemoryBarrierArray.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            imageMemoryBarrierArray.subresourceRange.baseMipLevel = 1;
+            imageMemoryBarrierArray.subresourceRange.levelCount = m_cubeTexture.GetMipCount() - 1;
+            imageMemoryBarrierArray.subresourceRange.baseArrayLayer = 0;
+            imageMemoryBarrierArray.subresourceRange.layerCount = 6;
+            imageMemoryBarrierArray.image = m_cubeTexture.Resource();
 
             // transition general layout if destination image to shader read only for source image
             vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                0, 0, nullptr, 0, nullptr, 1, &imageMemoryBarrier);
+                0, 0, nullptr, 0, nullptr, 1, &imageMemoryBarrierArray);
+
+            for (uint32_t i = 0; i < m_cubeTexture.GetMipCount() - 1; i++)
+            {
+                uint32_t dispatchX = ((m_cubeTexture.GetWidth() >> (i + 1)) + 7) / 8;
+                uint32_t dispatchY = ((m_cubeTexture.GetHeight() >> (i + 1)) + 7) / 8;
+                uint32_t dispatchZ = 1;
+
+                vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, 1, &m_mip[i].m_descriptorSet, 0, nullptr);
+
+                // Bind push constants
+                //
+                cbDownsample data;
+                data.outputSize[0] = (float)(m_cubeTexture.GetWidth() >> (i + 1));
+                data.outputSize[1] = (float)(m_cubeTexture.GetHeight() >> (i + 1));
+                data.invInputSize[0] = 1.0f / (float)(m_cubeTexture.GetWidth() >> i);
+                data.invInputSize[1] = 1.0f / (float)(m_cubeTexture.GetHeight() >> i);
+                data.slice = slice;
+                vkCmdPushConstants(cmd_buf, m_pipelineLayout,
+                    VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(cbDownsample), (void*)&data);
+
+                // Draw
+                //
+                vkCmdDispatch(cmd_buf, dispatchX, dispatchY, dispatchZ);
+
+                VkImageMemoryBarrier imageMemoryBarrier = {};
+                imageMemoryBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                imageMemoryBarrier.pNext = NULL;
+                imageMemoryBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                imageMemoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                imageMemoryBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+                imageMemoryBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                imageMemoryBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                imageMemoryBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                imageMemoryBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                imageMemoryBarrier.subresourceRange.baseMipLevel = i + 1;
+                imageMemoryBarrier.subresourceRange.levelCount = 1;
+                imageMemoryBarrier.subresourceRange.baseArrayLayer = 0;
+                imageMemoryBarrier.subresourceRange.layerCount = 6;
+                imageMemoryBarrier.image = m_cubeTexture.Resource();
+
+                // transition general layout if destination image to shader read only for source image
+                vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    0, 0, nullptr, 0, nullptr, 1, &imageMemoryBarrier);
+            }
         }
 
         SetPerfMarkerEnd(cmd_buf);
     }
 
-    void CSDownsampler::Gui()
+    void CSDownsampler::GUI(int* pSlice)
     {
         bool opened = true;
-        ImGui::Begin("Downsample", &opened);
+        std::string header = "Downsample";
+        ImGui::Begin(header.c_str(), &opened);
 
-        for (int i = 0; i < m_mipCount; i++)
+        if (ImGui::CollapsingHeader("CS Multipass", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            ImGui::Image((ImTextureID)m_mip[i].m_SRV, ImVec2(320, 180));
+            const char* sliceItemNames[] =
+            {
+                "Slice 0",
+                "Slice 1",
+                "Slice 2",
+                "Slice 3",
+                "Slice 4",
+                "Slice 5"
+            };
+            ImGui::Combo("Slice of Cube Texture", pSlice, sliceItemNames, _countof(sliceItemNames));
+
+            for (uint32_t i = 0; i < m_cubeTexture.GetMipCount(); i++)
+            {
+                ImGui::Image((ImTextureID)m_imGUISRV[*pSlice * m_cubeTexture.GetMipCount() + i], ImVec2(static_cast<float>(512 >> i), static_cast<float>(512 >> i)));
+            }
         }
 
         ImGui::End();

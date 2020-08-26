@@ -1,0 +1,41 @@
+{
+  "globals": {
+    "CpuValidationLayerEnabled": false,
+    "GpuValidationLayerEnabled": false,
+    "fullScreen": false,
+    "width": 1920,
+    "height": 1080,
+    "activeScene": 0,
+    "benchmark": false,
+    "stablePowerState": false,
+    "downsampler": 2,
+    "spdLoad": 0,
+    "spdWaveOps": 1,
+    "spdPacked": 0
+  },
+  "scenes": [
+    {
+      "name": "DamagedHelmet",
+      "directory": "..\\media\\cauldron-media\\DamagedHelmet\\GLTF\\",
+      "filename": "DamagedHelmet.gltf",
+      "TAA": true,
+      "toneMapper": 0,
+      "iblFactor": 2,
+      "emmisiveFactor": 1,
+      "intensity": 50,
+      "exposure": 1,
+      "camera": {
+        "defaultFrom": [ 0, 0, 3.5 ],
+        "defaultTo": [ 0, 0, 0 ]
+      },
+      "BenchmarkSettings": {
+        "timeStep": 1,
+        "timeStart": 0,
+        "timeEnd": 10000,
+        "exitWhenTimeEnds": true,
+        "resultsFilename": "FidelityFXSpd.csv",
+        "warmUpFrames": 200
+      }
+    }
+  ]
+}

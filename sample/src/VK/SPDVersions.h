@@ -18,55 +18,38 @@
 // THE SOFTWARE.
 #pragma once
 
-#include "Base/StaticBufferPool.h"
-#include "Base/Texture.h"
+#include "PostProc/PostProcCS.h"
+#include "PostProc/PostProcPS.h"
+#include "Base/ResourceViewHeaps.h"
+
+#include "SPDCS.h"
 
 namespace CAULDRON_VK
 {
-#define CS_MAX_MIP_LEVELS 12
-
-    class CSDownsampler
+    class SPDVersions
     {
     public:
         void OnCreate(Device *pDevice, UploadHeap *pUploadHeap, ResourceViewHeaps *pResourceViewHeaps);
         void OnDestroy();
 
-        void Draw(VkCommandBuffer cmd_buf);
-        Texture *GetTexture() { return &m_cubeTexture; }
-        void GUI(int *pSlice);
-
-        struct cbDownsample
-        {
-            float outputSize[2];
-            float invInputSize[2];
-            uint32_t slice;
-            uint32_t padding[3];
-        };
+        void Dispatch(VkCommandBuffer cmd_buf, SPDLoad spdLoad, SPDWaveOps spdWaveOps, SPDPacked spdPacked);
+        void GUI(SPDLoad spdLoad, SPDWaveOps spdWaveOps, SPDPacked spdPacked, int *pSlice);
 
     private:
-        Device                        *m_pDevice = nullptr;
+        Device                     *m_pDevice = NULL;
 
-        Texture                        m_cubeTexture;
+        SPDCS                       m_spd_WaveOps_NonPacked;
+        SPDCS                       m_spd_No_WaveOps_NonPacked;
 
-        struct Pass
-        {
-            VkImageView     m_UAV;
-            VkImageView     m_SRV;
-            VkDescriptorSet m_descriptorSet;
-        };
+        SPDCS                       m_spd_WaveOps_Packed;
+        SPDCS                       m_spd_No_WaveOps_Packed;
 
-        // for each mip for each array slice
-        Pass                           m_mip[CS_MAX_MIP_LEVELS] = {};
+        SPDCS                       m_spd_WaveOps_NonPacked_Linear_Sampler;
+        SPDCS                       m_spd_No_WaveOps_NonPacked_Linear_Sampler;
+                          
+        SPDCS                       m_spd_WaveOps_Packed_Linear_Sampler;
+        SPDCS                       m_spd_No_WaveOps_Packed_Linear_Sampler;
 
-        ResourceViewHeaps             *m_pResourceViewHeaps = nullptr;
-
-        VkDescriptorSetLayout          m_descriptorSetLayout = VK_NULL_HANDLE;
-
-        VkPipelineLayout               m_pipelineLayout = VK_NULL_HANDLE;
-        VkPipeline                     m_pipeline = VK_NULL_HANDLE;
-
-        VkSampler                      m_sampler = VK_NULL_HANDLE;
-
-        VkImageView                    m_imGUISRV[CS_MAX_MIP_LEVELS * 6] = {};
+        uint32_t GetMaxMIPLevelCount(uint32_t Width, uint32_t Height);
     };
 }
