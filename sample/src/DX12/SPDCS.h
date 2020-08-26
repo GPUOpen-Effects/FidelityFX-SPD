@@ -23,24 +23,51 @@
 
 namespace CAULDRON_DX12
 {
-#define CS_MAX_MIP_LEVELS 12
+#define SPD_MAX_MIP_LEVELS 12
 
-    class CSDownsampler
+    enum class SPDWaveOps
+    {
+        SPDNoWaveOps,
+        SPDWaveOps,
+    };
+
+    enum class SPDPacked
+    {
+        SPDNonPacked,
+        SPDPacked,
+    };
+
+    enum class SPDLoad
+    {
+        SPDLoad,
+        SPDLinearSampler,
+    };
+
+    class SPDCS
     {
     public:
-        void OnCreate(Device *pDevice, UploadHeap *pUploadHeap, ResourceViewHeaps *pResourceViewHeaps, DynamicBufferRing *pConstantBufferRing);
+        void OnCreate(Device *pDevice, UploadHeap *pUploadHeap, ResourceViewHeaps *pResourceViewHeaps, DynamicBufferRing *pConstantBufferRing, 
+            SPDLoad spdLoad, SPDWaveOps spdWaveOps, SPDPacked spdPacked);
         void OnDestroy();
 
-        void Draw(ID3D12GraphicsCommandList *pCommandList);
+        void Draw(ID3D12GraphicsCommandList2 *pCommandList);
         Texture *GetTexture() { return &m_cubeTexture; }
         void GUI(int *pSlice);
 
-        struct cbDownsample
+        struct SpdConstants
         {
-            uint32_t outWidth, outHeight;
-            float invWidth, invHeight;
-            uint32_t slice;
-            uint32_t padding[3];
+            int mips;
+            int numWorkGroupsPerSlice;
+            int workGroupOffset[2];
+        };
+
+        struct SpdLinearSamplerConstants
+        {
+            int mips;
+            int numWorkGroupsPerSlice;
+            int workGroupOffset[2];
+            float invInputSize[2];
+            float padding[2];
         };
 
     private:
@@ -48,22 +75,21 @@ namespace CAULDRON_DX12
 
         Texture                       m_cubeTexture;
 
-        struct Pass
-        {
-            CBV_SRV_UAV     m_constBuffer; // dimension
-            CBV_SRV_UAV     m_UAV; //dest
-            CBV_SRV_UAV     m_SRV; //src
-        };
+        CBV_SRV_UAV                   m_constBuffer; // dimension
+        CBV_SRV_UAV                   m_UAV[SPD_MAX_MIP_LEVELS + 1]; //src + dest mips
+        CBV_SRV_UAV                   m_SRV[SPD_MAX_MIP_LEVELS * 6]; // for display of mips using imGUI
+        CBV_SRV_UAV                   m_sourceSRV; // src
 
-        Pass                          m_mip[CS_MAX_MIP_LEVELS];
+        CBV_SRV_UAV                   m_globalCounter;
+        Texture                       m_globalCounterBuffer;
 
         ResourceViewHeaps            *m_pResourceViewHeaps = nullptr;
         DynamicBufferRing            *m_pConstantBufferRing = nullptr;
-        ID3D12RootSignature	         *m_pRootSignature = nullptr;
-        ID3D12PipelineState	         *m_pPipeline = nullptr;
+        ID3D12RootSignature          *m_pRootSignature = nullptr;
+        ID3D12PipelineState          *m_pPipeline = nullptr;
 
-        SAMPLER                       m_sampler;
-
-        CBV_SRV_UAV                   m_imGUISRV[CS_MAX_MIP_LEVELS * 6];
+        SPDLoad                       m_spdLoad;
+        SPDWaveOps                    m_spdWaveOps;
+        SPDPacked                     m_spdPacked;
     };
 }

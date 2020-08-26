@@ -3,6 +3,8 @@ set(CMAKE_GENERATOR_PLATFORM x64)
 
 project (SPDSample_${GFX_API})
 
+set(FFX_SPD_OUTPUT_DIRECTORY ${CMAKE_HOME_DIRECTORY}/bin)
+
 # ouput exe to bin directory
 SET(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_HOME_DIRECTORY}/bin)
 foreach( OUTPUTCONFIG ${CMAKE_CONFIGURATION_TYPES} )
@@ -16,7 +18,7 @@ add_subdirectory(libs/cauldron)
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${PROJECT_NAME})
 
 if(GFX_API STREQUAL DX12)        
-    add_subdirectory(src/DX12) 
+    add_subdirectory(src/DX12)
 elseif(GFX_API STREQUAL VK)
     find_package(Vulkan REQUIRED)
     add_subdirectory(src/VK)

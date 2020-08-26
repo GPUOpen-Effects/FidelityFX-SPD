@@ -29,92 +29,141 @@ layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 //--------------------------------------------------------------------------------------
 // Push Constants
 //--------------------------------------------------------------------------------------
-layout(push_constant) uniform pushConstants {
+layout(push_constant) uniform SpdConstants
+{
     uint mips;
     uint numWorkGroups;
-    // [SAMPLER]
-    vec2 invInputSize;
+    ivec2 workGroupOffset;
 } spdConstants;
 
 //--------------------------------------------------------------------------------------
 // Texture definitions
 //--------------------------------------------------------------------------------------
-//layout(set=0, binding=0, rgba16f) uniform image2D imgSrc;
-// [SAMPLER] image2D -> texture2D
-layout(set=0, binding=0) uniform texture2D imgSrc;
-layout(set=0, binding=1, rgba16f) coherent uniform image2D imgDst[12];
-// [SAMPLER] add sampler
-layout(set=0, binding=3) uniform sampler srcSampler;
+layout(set=0, binding=0, rgba16f) uniform image2DArray imgDst[13]; // don't access mip [6]
+layout(set=0, binding=1, rgba16f) coherent uniform image2DArray imgDst6;
+
 //--------------------------------------------------------------------------------------
 // Buffer definitions - global atomic counter
 //--------------------------------------------------------------------------------------
-layout(std430, binding=2) coherent buffer globalAtomicBuffer
+layout(std430, binding=2) coherent buffer spdGlobalAtomicBuffer
 {
-    uint counter;
-} globalAtomic;
+    uint counter[6];
+} spdGlobalAtomic;
 
 #define A_GPU
 #define A_GLSL
 
 #include "ffx_a.h"
 
-shared AU1 spd_counter;
+shared AU1 spdCounter;
 
 // define fetch and store functions Non-Packed
 #ifndef SPD_PACKED_ONLY
-shared AF1 spd_intermediateR[16][16];
-shared AF1 spd_intermediateG[16][16];
-shared AF1 spd_intermediateB[16][16];
-shared AF1 spd_intermediateA[16][16];
-//AF4 SPDLoadSourceImage(ASU2 p){return imageLoad(imgSrc, p);}
-// [SAMPLER] use sampler for accessing source image
-AF4 SpdLoadSourceImage(ASU2 p){
-    AF2 textureCoord = p * spdConstants.invInputSize + spdConstants.invInputSize;
-    return texture(sampler2D(imgSrc, srcSampler), textureCoord);
+shared AF1 spdIntermediateR[16][16];
+shared AF1 spdIntermediateG[16][16];
+shared AF1 spdIntermediateB[16][16];
+shared AF1 spdIntermediateA[16][16];
+
+AF4 SpdLoadSourceImage(ASU2 p, AU1 slice)
+{
+    return imageLoad(imgDst[0], ivec3(p,slice));
+}
+AF4 SpdLoad(ASU2 p, AU1 slice)
+{
+    return imageLoad(imgDst6,ivec3(p,slice));
+}
+void SpdStore(ASU2 p, AF4 value, AU1 mip, AU1 slice)
+{
+    if (mip == 5)
+    {
+        imageStore(imgDst6, ivec3(p,slice), value);
+        return;
     }
-AF4 SpdLoad(ASU2 p){return imageLoad(imgDst[5],p);}
-void SpdStore(ASU2 p, AF4 value, AU1 mip){imageStore(imgDst[mip], p, value);}
-void SpdIncreaseAtomicCounter(){spd_counter = atomicAdd(globalAtomic.counter, 1);}
-AU1 SpdGetAtomicCounter(){return spd_counter;}
-AF4 SpdLoadIntermediate(AU1 x, AU1 y){
+    imageStore(imgDst[mip+1], ivec3(p,slice), value);
+}
+void SpdIncreaseAtomicCounter(AU1 slice)
+{
+    spdCounter = atomicAdd(spdGlobalAtomic.counter[slice], 1);
+}
+AU1 SpdGetAtomicCounter()
+{
+    return spdCounter;
+}
+void SpdResetAtomicCounter(AU1 slice)
+{
+    spdGlobalAtomic.counter[slice] = 0;
+}
+AF4 SpdLoadIntermediate(AU1 x, AU1 y)
+{
     return AF4(
-    spd_intermediateR[x][y], 
-    spd_intermediateG[x][y], 
-    spd_intermediateB[x][y], 
-    spd_intermediateA[x][y]);}
-void SpdStoreIntermediate(AU1 x, AU1 y, AF4 value){
-    spd_intermediateR[x][y] = value.x;
-    spd_intermediateG[x][y] = value.y;
-    spd_intermediateB[x][y] = value.z;
-    spd_intermediateA[x][y] = value.w;}
-AF4 SpdReduce4(AF4 v0, AF4 v1, AF4 v2, AF4 v3){return (v0+v1+v2+v3)*0.25;}
+    spdIntermediateR[x][y], 
+    spdIntermediateG[x][y], 
+    spdIntermediateB[x][y], 
+    spdIntermediateA[x][y]);
+}
+void SpdStoreIntermediate(AU1 x, AU1 y, AF4 value)
+{
+    spdIntermediateR[x][y] = value.x;
+    spdIntermediateG[x][y] = value.y;
+    spdIntermediateB[x][y] = value.z;
+    spdIntermediateA[x][y] = value.w;
+}
+AF4 SpdReduce4(AF4 v0, AF4 v1, AF4 v2, AF4 v3)
+{
+    return (v0+v1+v2+v3)*0.25;
+}
 #endif
 
 // define fetch and store functions Packed
 #ifdef A_HALF
-shared AH2 spd_intermediateRG[16][16];
-shared AH2 spd_intermediateBA[16][16];
-AH4 SpdLoadSourceImageH(ASU2 p){
-    AF2 textureCoord = p * spdConstants.invInputSize + spdConstants.invInputSize;
-    return AH4(texture(sampler2D(imgSrc, srcSampler), textureCoord));
-    }
-AH4 SpdLoadH(ASU2 p){return AH4(imageLoad(imgDst[5],p));}
-void SpdStoreH(ASU2 p, AH4 value, AU1 mip){imageStore(imgDst[mip], p, AF4(value));}
-void SpdIncreaseAtomicCounter(){spd_counter = atomicAdd(globalAtomic.counter, 1);}
-AU1 SpdGetAtomicCounter(){return spd_counter;}
-AH4 SpdLoadIntermediateH(AU1 x, AU1 y){
-    return AH4(
-    spd_intermediateRG[x][y].x,
-    spd_intermediateRG[x][y].y,
-    spd_intermediateBA[x][y].x,
-    spd_intermediateBA[x][y].y);}
-void SpdStoreIntermediateH(AU1 x, AU1 y, AH4 value){
-    spd_intermediateRG[x][y] = value.xy;
-    spd_intermediateBA[x][y] = value.zw;}
-AH4 SpdReduce4H(AH4 v0, AH4 v1, AH4 v2, AH4 v3){return (v0+v1+v2+v3)*AH1(0.25f);}
-#endif
+shared AH2 spdIntermediateRG[16][16];
+shared AH2 spdIntermediateBA[16][16];
 
-#define SPD_LINEAR_SAMPLER
+AH4 SpdLoadSourceImageH(ASU2 p, AU1 slice)
+{
+    return AH4(imageLoad(imgDst[0], ivec3(p,slice)));
+}
+AH4 SpdLoadH(ASU2 p, AU1 slice)
+{
+    return AH4(imageLoad(imgDst6, ivec3(p,slice)));
+}
+void SpdStoreH(ASU2 p, AH4 value, AU1 mip, AU1 slice)
+{
+    if (mip == 5)
+    {
+        imageStore(imgDst6, ivec3(p,slice), AF4(value));
+        return;
+    }
+    imageStore(imgDst[mip+1], ivec3(p,slice), AF4(value));
+}
+void SpdIncreaseAtomicCounter(AU1 slice)
+{
+    spdCounter = atomicAdd(spdGlobalAtomic.counter[slice], 1);
+}
+AU1 SpdGetAtomicCounter()
+{
+    return spdCounter;
+}
+void SpdResetAtomicCounter(AU1 slice)
+{
+    spdGlobalAtomic.counter[slice] = 0;
+}
+AH4 SpdLoadIntermediateH(AU1 x, AU1 y)
+{
+    return AH4(
+    spdIntermediateRG[x][y].x,
+    spdIntermediateRG[x][y].y,
+    spdIntermediateBA[x][y].x,
+    spdIntermediateBA[x][y].y);}
+void SpdStoreIntermediateH(AU1 x, AU1 y, AH4 value){
+    spdIntermediateRG[x][y] = value.xy;
+    spdIntermediateBA[x][y] = value.zw;
+}
+AH4 SpdReduce4H(AH4 v0, AH4 v1, AH4 v2, AH4 v3)
+{
+    return (v0+v1+v2+v3)*AH1(0.25f);
+}
+#endif
 
 #include "ffx_spd.h"
 
@@ -128,12 +177,16 @@ void main()
         AU2(gl_WorkGroupID.xy), 
         AU1(gl_LocalInvocationIndex), 
         AU1(spdConstants.mips), 
-        AU1(spdConstants.numWorkGroups));
+        AU1(spdConstants.numWorkGroups),
+        AU1(gl_WorkGroupID.z),
+        AU2(spdConstants.workGroupOffset));
 #else
     SpdDownsampleH(
         AU2(gl_WorkGroupID.xy), 
         AU1(gl_LocalInvocationIndex), 
         AU1(spdConstants.mips), 
-        AU1(spdConstants.numWorkGroups));
+        AU1(spdConstants.numWorkGroups),
+        AU1(gl_WorkGroupID.z),
+        AU2(spdConstants.workGroupOffset));
 #endif
 }

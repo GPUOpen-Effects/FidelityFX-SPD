@@ -32,17 +32,16 @@ namespace CAULDRON_DX12
 {
     void PSDownsampler::OnCreate(
         Device *pDevice,
+        UploadHeap *pUploadHeap,
         ResourceViewHeaps *pResourceViewHeaps,
         DynamicBufferRing *pConstantBufferRing,
-        StaticBufferPool  *pStaticBufferPool,
-        DXGI_FORMAT outFormat
+        StaticBufferPool  *pStaticBufferPool
     )
     {
         m_pDevice = pDevice;
         m_pStaticBufferPool = pStaticBufferPool;
         m_pResourceViewHeaps = pResourceViewHeaps;
         m_pConstantBufferRing = pConstantBufferRing;
-        m_outFormat = outFormat;
 
         // Use helper class to create the fullscreen pass
         //
@@ -62,99 +61,104 @@ namespace CAULDRON_DX12
         SamplerDesc.RegisterSpace = 0;
         SamplerDesc.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-        m_downscale.OnCreate(pDevice, "PSDownsampler.hlsl", m_pResourceViewHeaps, 
-            m_pStaticBufferPool, 1, 1, &SamplerDesc, m_outFormat);
+        m_cubeTexture.InitFromFile(pDevice, pUploadHeap, "..\\media\\envmaps\\papermill\\specular.dds", true, 1.0f, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+        pUploadHeap->FlushAndFinish();
+
+        m_downsample.OnCreate(pDevice, "PSDownsampler.hlsl", m_pResourceViewHeaps, 
+            m_pStaticBufferPool, 1, 1, &SamplerDesc, m_cubeTexture.GetFormat());
 
         // Allocate descriptors for the mip chain
         //
-        for (int i = 0; i < DOWNSAMPLEPS_MAX_MIP_LEVELS; i++)
+        for (uint32_t slice = 0; slice < m_cubeTexture.GetArraySize(); slice++)
         {
-            m_pResourceViewHeaps->AllocCBV_SRV_UAVDescriptor(1, &m_mip[i].m_SRV);
-            m_pResourceViewHeaps->AllocRTVDescriptor(1, &m_mip[i].m_RTV);
+            for (uint32_t i = 0; i < m_cubeTexture.GetMipCount() - 1; i++)
+            {
+                m_pResourceViewHeaps->AllocCBV_SRV_UAVDescriptor(1, &m_mip[slice * (m_cubeTexture.GetMipCount() - 1) + i].m_SRV);
+                m_pResourceViewHeaps->AllocRTVDescriptor(1, &m_mip[slice * (m_cubeTexture.GetMipCount() - 1) + i].m_RTV);
+
+                m_cubeTexture.CreateSRV(0, &m_mip[slice * (m_cubeTexture.GetMipCount() - 1) + i].m_SRV, i, 1, slice);
+                m_cubeTexture.CreateRTV(0, &m_mip[slice * (m_cubeTexture.GetMipCount() - 1) + i].m_RTV, i + 1, 1, slice);
+            }
         }
 
-    }
-
-    void PSDownsampler::OnCreateWindowSizeDependentResources(uint32_t Width, uint32_t Height, Texture *pInput, int mipCount)
-    {
-        m_Width = Width;
-        m_Height = Height;
-        m_mipCount = mipCount;
-        m_pInput = pInput;
-
-        m_result.InitRenderTarget(m_pDevice, "PSDownsampler::m_result", &CD3DX12_RESOURCE_DESC::Tex2D(m_outFormat, m_Width >> 1, m_Height >> 1, 1, mipCount, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-
-        // Create views for the mip chain
-        //
-        for (int i = 0; i < m_mipCount; i++)
+        for (uint32_t slice = 0; slice < m_cubeTexture.GetArraySize(); slice++)
         {
-            // source 
-            //
-            if (i == 0)
+            for (uint32_t mip = 0; mip < m_cubeTexture.GetMipCount(); mip++)
             {
-                pInput->CreateSRV(0, &m_mip[i].m_SRV, 0);
+                m_pResourceViewHeaps->AllocCBV_SRV_UAVDescriptor(1, &m_imGUISRV[slice * m_cubeTexture.GetMipCount() + mip]);
+                m_cubeTexture.CreateSRV(0, &m_imGUISRV[slice * m_cubeTexture.GetMipCount() + mip], mip, 1, slice);
             }
-            else
-            {
-                m_result.CreateSRV(0, &m_mip[i].m_SRV, i - 1);
-            }
-
-            // destination 
-            //
-            m_result.CreateRTV(0, &m_mip[i].m_RTV, i);
         }
-    }
-
-    void PSDownsampler::OnDestroyWindowSizeDependentResources()
-    {
-        m_result.OnDestroy();
     }
 
     void PSDownsampler::OnDestroy()
     {
-        m_downscale.OnDestroy();
+        m_cubeTexture.OnDestroy();
+        m_downsample.OnDestroy();
     }
     
-    void PSDownsampler::Draw(ID3D12GraphicsCommandList* pCommandList)
+    void PSDownsampler::Draw(ID3D12GraphicsCommandList *pCommandList)
     {
         UserMarker marker(pCommandList, "PSDownsampler");
 
         // downsample
         //
-        for (int i = 0; i < m_mipCount; i++)
+        for (uint32_t slice = 0; slice < m_cubeTexture.GetArraySize(); slice++)
         {
-            pCommandList->OMSetRenderTargets(1, &m_mip[i].m_RTV.GetCPU(), true, NULL);
-            SetViewportAndScissor(pCommandList, 0, 0, m_Width >> (i + 1), m_Height >> (i + 1));
-
-            cbDownscale *data;
-            D3D12_GPU_VIRTUAL_ADDRESS constantBuffer;
-            m_pConstantBufferRing->AllocConstantBuffer(sizeof(cbDownscale), (void **)&data, &constantBuffer);
-            data->outWidth = (float)(m_Width >> (i + 1));
-            data->outHeight = (float)(m_Height >> (i + 1));
-            data->invWidth = 1.0f / (float)(m_Width >> i);
-            data->invHeight = 1.0f / (float)(m_Height >> i);
-
-            if (i > 0)
+            for (uint32_t i = 0; i < m_cubeTexture.GetMipCount() - 1; i++)
             {
-                pCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(m_result.GetResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, i - 1));
+                pCommandList->ResourceBarrier(1, 
+                    &CD3DX12_RESOURCE_BARRIER::Transition(m_cubeTexture.GetResource(), 
+                        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, 
+                        D3D12_RESOURCE_STATE_RENDER_TARGET, 
+                        slice * m_cubeTexture.GetMipCount() + i + 1));
+
+                pCommandList->OMSetRenderTargets(1, &m_mip[slice * (m_cubeTexture.GetMipCount() - 1) + i].m_RTV.GetCPU(), true, NULL);
+                SetViewportAndScissor(pCommandList, 0, 0, m_cubeTexture.GetWidth() >> (i + 1), m_cubeTexture.GetHeight() >> (i + 1));
+
+                cbDownsample* data;
+                D3D12_GPU_VIRTUAL_ADDRESS constantBuffer;
+                m_pConstantBufferRing->AllocConstantBuffer(sizeof(cbDownsample), (void**)&data, &constantBuffer);
+                data->outWidth = (float)(m_cubeTexture.GetWidth() >> (i + 1));
+                data->outHeight = (float)(m_cubeTexture.GetHeight() >> (i + 1));
+                data->invWidth = 1.0f / (float)(m_cubeTexture.GetWidth() >> i);
+                data->invHeight = 1.0f / (float)(m_cubeTexture.GetHeight() >> i);
+                data->slice = slice;
+
+                m_downsample.Draw(pCommandList, 1, &m_mip[slice * (m_cubeTexture.GetMipCount() - 1) + i].m_SRV, constantBuffer);
+
+                pCommandList->ResourceBarrier(1, 
+                    &CD3DX12_RESOURCE_BARRIER::Transition(m_cubeTexture.GetResource(), 
+                        D3D12_RESOURCE_STATE_RENDER_TARGET, 
+                        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, 
+                        slice * m_cubeTexture.GetMipCount() + i + 1));
             }
-
-            pCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(m_result.GetResource(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET, i));
-
-            m_downscale.Draw(pCommandList, 1, &m_mip[i].m_SRV, constantBuffer);
         }
-
-        pCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(m_result.GetResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, m_mipCount - 1));
     }
 
-    void PSDownsampler::Gui()
+    void PSDownsampler::GUI(int *pSlice)
     {
         bool opened = true;
-        ImGui::Begin("Downsample", &opened);
+        std::string header = "Downsample";
+        ImGui::Begin(header.c_str(), &opened);
 
-        for (int i = 0; i < m_mipCount; i++)
+        if (ImGui::CollapsingHeader("PS", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            ImGui::Image((ImTextureID)&m_mip[i].m_SRV, ImVec2(320, 180));
+            const char* sliceItemNames[] =
+            {
+                "Slice 0",
+                "Slice 1",
+                "Slice 2",
+                "Slice 3",
+                "Slice 4",
+                "Slice 5"
+            };
+            ImGui::Combo("Slice of Cube Texture", pSlice, sliceItemNames, _countof(sliceItemNames));
+
+            for (uint32_t i = 0; i < m_cubeTexture.GetMipCount(); i++)
+            {
+                ImGui::Image((ImTextureID)&m_imGUISRV[*pSlice * m_cubeTexture.GetMipCount() + i], ImVec2(static_cast<float>(512 >> i), static_cast<float>(512 >> i)));
+            }
         }
 
         ImGui::End();

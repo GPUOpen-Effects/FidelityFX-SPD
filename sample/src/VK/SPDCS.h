@@ -20,27 +20,55 @@
 
 #include "Base/StaticBufferPool.h"
 #include "Base/Texture.h"
+#include "Base/DynamicBufferRing.h"
 
 namespace CAULDRON_VK
 {
-#define CS_MAX_MIP_LEVELS 12
+#define SPD_MAX_MIP_LEVELS 12
 
-    class CSDownsampler
+    enum class SPDWaveOps
+    {
+        SPDNoWaveOps,
+        SPDWaveOps,
+    };
+
+    enum class SPDPacked
+    {
+        SPDNonPacked,
+        SPDPacked,
+    };
+
+    enum class SPDLoad
+    {
+        SPDLoad,
+        SPDLinearSampler,
+    };
+
+    class SPDCS
     {
     public:
-        void OnCreate(Device *pDevice, UploadHeap *pUploadHeap, ResourceViewHeaps *pResourceViewHeaps);
+        void OnCreate(Device *pDevice, UploadHeap *pUploadHeap, ResourceViewHeaps *pResourceViewHeaps,
+            SPDLoad spdLoad, SPDWaveOps spdWaveOps, SPDPacked spdPacked);
         void OnDestroy();
 
         void Draw(VkCommandBuffer cmd_buf);
         Texture *GetTexture() { return &m_cubeTexture; }
-        void GUI(int *pSlice);
+        void GUI(int* pSlice);
 
-        struct cbDownsample
+        struct SpdConstants
         {
-            float outputSize[2];
+            int mips;
+            int numWorkGroupsPerSlice;
+            int workGroupOffset[2];
+        };
+
+        struct SpdLinearSamplerConstants
+        {
+            int mips;
+            int numWorkGroupsPerSlice;
+            int workGroupOffset[2];
             float invInputSize[2];
-            uint32_t slice;
-            uint32_t padding[3];
+            float padding[2];
         };
 
     private:
@@ -48,25 +76,25 @@ namespace CAULDRON_VK
 
         Texture                        m_cubeTexture;
 
-        struct Pass
-        {
-            VkImageView     m_UAV;
-            VkImageView     m_SRV;
-            VkDescriptorSet m_descriptorSet;
-        };
-
-        // for each mip for each array slice
-        Pass                           m_mip[CS_MAX_MIP_LEVELS] = {};
+        VkImageView                    m_UAV[SPD_MAX_MIP_LEVELS + 1] = {}; // source + destinations (mips)
+        VkImageView                    m_SRV[SPD_MAX_MIP_LEVELS * 6] = {}; // for display of MIPS using imGUI
+        VkImageView                    m_sourceSRV = VK_NULL_HANDLE; // source when linear sampler is used
+        VkSampler                      m_sampler = VK_NULL_HANDLE; // linear sampler
+        VkDescriptorSet                m_descriptorSet = VK_NULL_HANDLE;
 
         ResourceViewHeaps             *m_pResourceViewHeaps = nullptr;
+        DynamicBufferRing             *m_pConstantBufferRing = nullptr;
 
         VkDescriptorSetLayout          m_descriptorSetLayout = VK_NULL_HANDLE;
 
         VkPipelineLayout               m_pipelineLayout = VK_NULL_HANDLE;
         VkPipeline                     m_pipeline = VK_NULL_HANDLE;
 
-        VkSampler                      m_sampler = VK_NULL_HANDLE;
+        VkBuffer                       m_globalCounter = VK_NULL_HANDLE;
+        VmaAllocation                  m_globalCounterAllocation;
 
-        VkImageView                    m_imGUISRV[CS_MAX_MIP_LEVELS * 6] = {};
+        SPDLoad                        m_spdLoad;
+        SPDWaveOps                     m_spdWaveOps;
+        SPDPacked                      m_spdPacked;
     };
 }

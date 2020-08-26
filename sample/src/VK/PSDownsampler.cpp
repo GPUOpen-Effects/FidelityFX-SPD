@@ -32,18 +32,17 @@
 namespace CAULDRON_VK
 {
     void PSDownsampler::OnCreate(
-        Device* pDevice,
+        Device *pDevice,
+        UploadHeap *pUploadHeap,
         ResourceViewHeaps *pResourceViewHeaps,
         DynamicBufferRing *pConstantBufferRing,
-        StaticBufferPool *pStaticBufferPool,
-        VkFormat outFormat
+        StaticBufferPool *pStaticBufferPool
     )
     {
         m_pDevice = pDevice;
         m_pStaticBufferPool = pStaticBufferPool;
         m_pResourceViewHeaps = pResourceViewHeaps;
         m_pConstantBufferRing = pConstantBufferRing;
-        m_outFormat = outFormat;
 
         // Create Descriptor Set Layout, the shader needs a uniform dynamic buffer and a texture + sampler
         // The Descriptor Sets will be created and initialized once we know the input to the shader, that happens in OnCreateWindowSizeDependentResources()
@@ -71,9 +70,58 @@ namespace CAULDRON_VK
             assert(res == VK_SUCCESS);
         }
 
+        m_cubeTexture.InitFromFile(pDevice, pUploadHeap, "..\\media\\envmaps\\papermill\\specular.dds", true, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        pUploadHeap->FlushAndFinish();
+
         // In Render pass
         //
-        m_in = SimpleColorWriteRenderPass(pDevice->GetDevice(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        // color RT
+        VkAttachmentDescription attachments[1];
+        attachments[0].format = m_cubeTexture.GetFormat();
+        attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE; // we don't care about the previous contents, this is for a full screen pass with no blending
+        attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[0].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        attachments[0].flags = 0;
+
+        VkAttachmentReference color_reference = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+
+        VkSubpassDescription subpass = {};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.flags = 0;
+        subpass.inputAttachmentCount = 0;
+        subpass.pInputAttachments = NULL;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &color_reference;
+        subpass.pResolveAttachments = NULL;
+        subpass.pDepthStencilAttachment = NULL;
+        subpass.preserveAttachmentCount = 0;
+        subpass.pPreserveAttachments = NULL;
+
+        VkSubpassDependency dep = {};
+        dep.dependencyFlags = 0;
+        dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+        dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        dep.dstSubpass = VK_SUBPASS_EXTERNAL;
+        dep.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dep.srcSubpass = 0;
+
+        VkRenderPassCreateInfo rp_info = {};
+        rp_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        rp_info.pNext = NULL;
+        rp_info.attachmentCount = 1;
+        rp_info.pAttachments = attachments;
+        rp_info.subpassCount = 1;
+        rp_info.pSubpasses = &subpass;
+        rp_info.dependencyCount = 1;
+        rp_info.pDependencies = &dep;
+
+        VkResult res = vkCreateRenderPass(pDevice->GetDevice(), &rp_info, NULL, &m_in);
+        assert(res == VK_SUCCESS);
 
         // The sampler we want to use for downsampling, all linear
         //
@@ -95,68 +143,46 @@ namespace CAULDRON_VK
 
         // Use helper class to create the fullscreen pass
         //
-        m_downscale.OnCreate(pDevice, m_in, "PSDownsampler.glsl", pStaticBufferPool, pConstantBufferRing, m_descriptorSetLayout);
+        m_downsample.OnCreate(pDevice, m_in, "PSDownsampler.glsl", "main", "", pStaticBufferPool, pConstantBufferRing, m_descriptorSetLayout);
 
         // Allocate descriptors for the mip chain
         //
-        for (int i = 0; i < DOWNSAMPLEPS_MAX_MIP_LEVELS; i++)
+        for (int i = 0; i < DOWNSAMPLEPS_MAX_MIP_LEVELS * 6; i++)
         {
-            m_pResourceViewHeaps->AllocDescriptor(m_descriptorSetLayout, &m_mip[i].descriptorSet);
+            m_pResourceViewHeaps->AllocDescriptor(m_descriptorSetLayout, &m_mip[i].m_descriptorSet);
         }
-    }
 
-    void PSDownsampler::OnCreateWindowSizeDependentResources(uint32_t Width, uint32_t Height, Texture *pInput, int mipCount)
-    {
-        m_Width = Width;
-        m_Height = Height;
-        m_mipCount = mipCount;
-
-        VkImageCreateInfo image_info = {};
-        image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        image_info.pNext = NULL;
-        image_info.imageType = VK_IMAGE_TYPE_2D;
-        image_info.format = m_outFormat;
-        image_info.extent.width = m_Width >> 1;
-        image_info.extent.height = m_Height >> 1;
-        image_info.extent.depth = 1;
-        image_info.mipLevels = mipCount;
-        image_info.arrayLayers = 1;
-        image_info.samples = VK_SAMPLE_COUNT_1_BIT;
-        image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        image_info.queueFamilyIndexCount = 0;
-        image_info.pQueueFamilyIndices = NULL;
-        image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        image_info.usage = (VkImageUsageFlags)(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT); //TODO    
-        image_info.flags = 0;
-        image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-        m_result.Init(m_pDevice, &image_info, "DownsampleMip");
-
-        // Create views for the mip chain
-        //
-        for (int i = 0; i < m_mipCount; i++)
+        for (uint32_t slice = 0; slice < m_cubeTexture.GetArraySize(); slice++)
         {
-            // source -----------
-            //
-            if (i == 0)
+            for (uint32_t mip = 0; mip < m_cubeTexture.GetMipCount() - 1; mip++)
             {
-                pInput->CreateSRV(&m_mip[i].m_SRV, 0);
-            }
-            else
-            {
-                m_result.CreateSRV(&m_mip[i].m_SRV, i - 1);
-            }
 
-            // Create and initialize the Descriptor Sets (all of them use the same Descriptor Layout)        
-            m_pConstantBufferRing->SetDescriptorSet(0, sizeof(DownSamplePS::cbDownscale), m_mip[i].descriptorSet);
-            SetDescriptorSet(m_pDevice->GetDevice(), 1, m_mip[i].m_SRV, &m_sampler, m_mip[i].descriptorSet);
+                VkImageViewCreateInfo info = {};
+                info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+                info.image = m_cubeTexture.Resource();
+                info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+                info.subresourceRange.baseArrayLayer = slice;
+                info.subresourceRange.layerCount = 1;
+                info.format = m_cubeTexture.GetFormat();
+                info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                info.subresourceRange.baseMipLevel = mip;
+                info.subresourceRange.levelCount = 1;
 
-            // destination -----------
-            //
-            m_result.CreateRTV(&m_mip[i].RTV, i);
+                VkResult res = vkCreateImageView(m_pDevice->GetDevice(), &info, NULL,
+                    &m_mip[slice * m_cubeTexture.GetMipCount() + mip].m_SRV);
+                assert(res == VK_SUCCESS);
 
-            // Create framebuffer 
-            {
-                VkImageView attachments[1] = { m_mip[i].RTV };
+                // Create and initialize the Descriptor Sets (all of them use the same Descriptor Layout)        
+                m_pConstantBufferRing->SetDescriptorSet(0, sizeof(DownSamplePS::cbDownscale), m_mip[slice * m_cubeTexture.GetMipCount() + mip].m_descriptorSet);
+                SetDescriptorSet(m_pDevice->GetDevice(), 1, m_mip[slice * m_cubeTexture.GetMipCount() + mip].m_SRV, &m_sampler, m_mip[slice * m_cubeTexture.GetMipCount() + mip].m_descriptorSet);
+
+                info.subresourceRange.baseMipLevel = mip + 1;
+
+                res = vkCreateImageView(m_pDevice->GetDevice(), &info, NULL,
+                    &m_mip[slice * m_cubeTexture.GetMipCount() + mip].m_RTV);
+                assert(res == VK_SUCCESS);
+
+                VkImageView attachments[1] = { m_mip[slice * m_cubeTexture.GetMipCount() + mip].m_RTV };
 
                 VkFramebufferCreateInfo fb_info = {};
                 fb_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -164,37 +190,37 @@ namespace CAULDRON_VK
                 fb_info.renderPass = m_in;
                 fb_info.attachmentCount = 1;
                 fb_info.pAttachments = attachments;
-                fb_info.width = m_Width >> (i + 1);
-                fb_info.height = m_Height >> (i + 1);
+                fb_info.width = m_cubeTexture.GetWidth() >> (mip + 1);
+                fb_info.height = m_cubeTexture.GetHeight() >> (mip + 1);
                 fb_info.layers = 1;
-                VkResult res = vkCreateFramebuffer(m_pDevice->GetDevice(), &fb_info, NULL, &m_mip[i].frameBuffer);
+                res = vkCreateFramebuffer(m_pDevice->GetDevice(), &fb_info, NULL, &m_mip[slice * m_cubeTexture.GetMipCount() + mip].m_frameBuffer);
                 assert(res == VK_SUCCESS);
             }
         }
     }
 
-    void PSDownsampler::OnDestroyWindowSizeDependentResources()
-    {
-        for (int i = 0; i < m_mipCount; i++)
-        {
-            vkDestroyImageView(m_pDevice->GetDevice(), m_mip[i].m_SRV, NULL);
-            vkDestroyImageView(m_pDevice->GetDevice(), m_mip[i].RTV, NULL);
-            vkDestroyFramebuffer(m_pDevice->GetDevice(), m_mip[i].frameBuffer, NULL);
-        }
-
-        m_result.OnDestroy();
-    }
-
     void PSDownsampler::OnDestroy()
     {
-        for (int i = 0; i < DOWNSAMPLEPS_MAX_MIP_LEVELS; i++)
+        for (uint32_t slice = 0; slice < m_cubeTexture.GetArraySize(); slice++)
         {
-            m_pResourceViewHeaps->FreeDescriptor(m_mip[i].descriptorSet);
+            for (uint32_t i = 0; i < m_cubeTexture.GetMipCount() - 1; i++)
+            {
+                vkDestroyImageView(m_pDevice->GetDevice(), m_mip[slice * m_cubeTexture.GetMipCount() + i].m_SRV, NULL);
+                vkDestroyImageView(m_pDevice->GetDevice(), m_mip[slice * m_cubeTexture.GetMipCount() + i].m_RTV, NULL);
+                vkDestroyFramebuffer(m_pDevice->GetDevice(), m_mip[slice * m_cubeTexture.GetMipCount() + i].m_frameBuffer, NULL);
+            }
         }
 
-        m_downscale.OnDestroy();
+        m_cubeTexture.OnDestroy();
+
+        for (int i = 0; i < DOWNSAMPLEPS_MAX_MIP_LEVELS * 6; i++)
+        {
+            m_pResourceViewHeaps->FreeDescriptor(m_mip[i].m_descriptorSet);
+        }
+
+        m_downsample.OnDestroy();
         vkDestroyDescriptorSetLayout(m_pDevice->GetDevice(), m_descriptorSetLayout, NULL);
-        vkDestroySampler(m_pDevice->GetDevice(), m_sampler, nullptr);
+        vkDestroySampler(m_pDevice->GetDevice(), m_sampler, NULL);
 
         vkDestroyRenderPass(m_pDevice->GetDevice(), m_in, NULL);
     }
@@ -205,47 +231,66 @@ namespace CAULDRON_VK
 
         // downsample
         //
-        for (int i = 0; i < m_mipCount; i++)
+        for (uint32_t slice = 0; slice < m_cubeTexture.GetArraySize(); slice++)
         {
+            for (uint32_t i = 0; i < m_cubeTexture.GetMipCount() - 1; i++)
+            {
 
-            VkRenderPassBeginInfo rp_begin = {};
-            rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            rp_begin.pNext = NULL;
-            rp_begin.renderPass = m_in;
-            rp_begin.framebuffer = m_mip[i].frameBuffer;
-            rp_begin.renderArea.offset.x = 0;
-            rp_begin.renderArea.offset.y = 0;
-            rp_begin.renderArea.extent.width = m_Width >> (i + 1);
-            rp_begin.renderArea.extent.height = m_Height >> (i + 1);
-            rp_begin.clearValueCount = 0;
-            rp_begin.pClearValues = NULL;
-            vkCmdBeginRenderPass(cmd_buf, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
-            SetViewportAndScissor(cmd_buf, 0, 0, m_Width >> (i + 1), m_Height >> (i + 1));
+                VkRenderPassBeginInfo rp_begin = {};
+                rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                rp_begin.pNext = NULL;
+                rp_begin.renderPass = m_in;
+                rp_begin.framebuffer = m_mip[slice * m_cubeTexture.GetMipCount() + i].m_frameBuffer;
+                rp_begin.renderArea.offset.x = 0;
+                rp_begin.renderArea.offset.y = 0;
+                rp_begin.renderArea.extent.width = m_cubeTexture.GetWidth() >> (i + 1);
+                rp_begin.renderArea.extent.height = m_cubeTexture.GetHeight() >> (i + 1);
+                rp_begin.clearValueCount = 0;
+                rp_begin.pClearValues = NULL;
+                vkCmdBeginRenderPass(cmd_buf, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+                SetViewportAndScissor(cmd_buf, 0, 0, m_cubeTexture.GetWidth() >> (i + 1), m_cubeTexture.GetHeight() >> (i + 1));
 
-            cbDownscale *data;
-            VkDescriptorBufferInfo constantBuffer;
-            m_pConstantBufferRing->AllocConstantBuffer(sizeof(cbDownscale), (void **)&data, &constantBuffer);
-            data->outWidth = (float)(m_Width >> (i + 1));
-            data->outHeight = (float)(m_Height >> (i + 1));
-            data->invWidth = 1.0f / (float)(m_Width >> i);
-            data->invHeight = 1.0f / (float)(m_Height >> i);
+                cbDownsample* data;
+                VkDescriptorBufferInfo constantBuffer;
+                m_pConstantBufferRing->AllocConstantBuffer(sizeof(cbDownsample), (void**)&data, &constantBuffer);
+                data->outWidth = (float)(m_cubeTexture.GetWidth() >> (i + 1));
+                data->outHeight = (float)(m_cubeTexture.GetHeight() >> (i + 1));
+                data->invWidth = 1.0f / (float)(m_cubeTexture.GetWidth() >> i);
+                data->invHeight = 1.0f / (float)(m_cubeTexture.GetHeight() >> i);
+                data->slice = slice;
 
-            m_downscale.Draw(cmd_buf, constantBuffer, m_mip[i].descriptorSet);
+                m_downsample.Draw(cmd_buf, constantBuffer, m_mip[slice * m_cubeTexture.GetMipCount() + i].m_descriptorSet);
 
-            vkCmdEndRenderPass(cmd_buf);
+                vkCmdEndRenderPass(cmd_buf);
+            }
         }
 
         SetPerfMarkerEnd(cmd_buf);
     }
 
-    void PSDownsampler::Gui()
+    void PSDownsampler::GUI(int* pSlice)
     {
         bool opened = true;
-        ImGui::Begin("Downsample", &opened);
+        std::string header = "Downsample";
+        ImGui::Begin(header.c_str(), &opened);
 
-        for (int i = 0; i < m_mipCount; i++)
+        if (ImGui::CollapsingHeader("PS", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            ImGui::Image((ImTextureID)m_mip[i].m_SRV, ImVec2(320, 180));
+            const char* sliceItemNames[] =
+            {
+                "Slice 0",
+                "Slice 1",
+                "Slice 2",
+                "Slice 3",
+                "Slice 4",
+                "Slice 5"
+            };
+            ImGui::Combo("Slice of Cube Texture", pSlice, sliceItemNames, _countof(sliceItemNames));
+
+            for (uint32_t i = 0; i < m_cubeTexture.GetMipCount(); i++)
+            {
+                ImGui::Image((ImTextureID)m_mip[*pSlice * m_cubeTexture.GetMipCount() + i].m_SRV, ImVec2(static_cast<float>(512 >> i), static_cast<float>(512 >> i)));
+            }
         }
 
         ImGui::End();
