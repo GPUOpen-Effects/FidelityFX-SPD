@@ -22,16 +22,17 @@
 //--------------------------------------------------------------------------------------
 cbuffer cbPerFrame : register(b0)
 {
-    uint2 u_outSize;
+    uint2  u_outSize;
     float2 u_invSize;
+    uint   u_slice;
 }
 
 //--------------------------------------------------------------------------------------
 // Texture definitions
 //--------------------------------------------------------------------------------------
-RWTexture2D<float4>         outputTex           : register(u0);
-Texture2D                   inputTex            : register(t0);
-SamplerState                samLinearMirror     : register(s0);
+RWTexture2DArray<float4>         outputTex           : register(u0);
+Texture2DArray                   inputTex            : register(t0);
+SamplerState                     samLinear     : register(s0);
 
 // Main function
 //--------------------------------------------------------------------------------------
@@ -43,5 +44,10 @@ void main(uint3 LocalThreadId : SV_GroupThreadID, uint3 WorkGroupId : SV_GroupID
         return;
 
     float2 samplerTexCoord = u_invSize * float2(DispatchId.xy) * 2.0 + u_invSize;
-    outputTex[DispatchId.xy] = inputTex.SampleLevel(samLinearMirror, samplerTexCoord, 0);
+    float4 result = inputTex.SampleLevel(samLinear, float3(samplerTexCoord, u_slice), 0);
+    result.r = max(min(result.r * (12.92), (0.0031308)), (1.055) * pow(result.r, (0.41666)) - (0.055));
+    result.g = max(min(result.g * (12.92), (0.0031308)), (1.055) * pow(result.g, (0.41666)) - (0.055));
+    result.b = max(min(result.b * (12.92), (0.0031308)), (1.055) * pow(result.b, (0.41666)) - (0.055));
+
+    outputTex[int3(DispatchId.xy, u_slice)] = result;
 }
