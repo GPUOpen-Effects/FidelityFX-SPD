@@ -343,13 +343,14 @@ ASU1 mips // optional: if -1, calculate based on rect width and height
     numWorkGroupsAndMips[0] = (dispatchThreadGroupCountXY[0]) * (dispatchThreadGroupCountXY[1]);
 
     if (mips >= 0) {
-        numWorkGroupsAndMips[1] = AU1(mips);
+        numWorkGroupsAndMips[1] = (AU1)(mips);
     } else { // calculate based on rect width and height
         AU1 resolution = AMaxU1(rectInfo[2], rectInfo[3]);
-        numWorkGroupsAndMips[1] = AU1((AMinF1(AFloorF1(ALog2F1(AF1(resolution))), AF1(12))));
+        numWorkGroupsAndMips[1] = (AU1)((AMinF1(AFloorF1(ALog2F1((AF1)(resolution))), (AF1)(12))));
     }
 }
 
+#ifdef __cplusplus
 A_STATIC void SpdSetup(
     outAU2 dispatchThreadGroupCountXY, // CPU side: dispatch thread group count xy
     outAU2 workGroupOffset, // GPU side: pass in as constant
@@ -358,6 +359,7 @@ A_STATIC void SpdSetup(
 ) {
     SpdSetup(dispatchThreadGroupCountXY, workGroupOffset, numWorkGroupsAndMips, rectInfo, -1);
 }
+#endif // #ifdef __cplusplus
 #endif // #ifdef A_CPU
 //==============================================================================================================================
 //                                                     NON-PACKED VERSION
